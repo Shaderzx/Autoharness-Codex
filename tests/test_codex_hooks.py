@@ -24,8 +24,9 @@ def roots(tmp_path):
 
 
 def managed_skill(roots, name="native-reader"):
+    """Create an owned project skill for hook attribution checks."""
     root = roots[layer.PROJECT]
-    skill_store.write_body(layer.PROJECT, name, "---\nname: native-reader\n"
+    skill_store.write_body(layer.PROJECT, name, f"---\nname: {name}\n"
                            "description: Read project conventions.\n---\nUse project conventions.\n", root)
     sidecar.create(layer.PROJECT, name, anchor=0, root=root)
     return layer.symbol_dir(layer.PROJECT, name, root) / "SKILL.md"
@@ -114,6 +115,7 @@ def test_disabled_curation_does_not_fire_after_tool_activity(roots):
 
 
 def test_detached_worker_imports_from_an_unrelated_directory(roots, tmp_path, monkeypatch):
+    """Verify detached workers retain package imports outside the source checkout."""
     monkeypatch.delenv("PYTHONPATH", raising=False)
     launches = []
     with monkeypatch.context() as patcher:
@@ -130,14 +132,39 @@ def test_detached_worker_imports_from_an_unrelated_directory(roots, tmp_path, mo
     assert probe.stdout.strip() == "worker-import-ok"
 
 
-@pytest.mark.parametrize("tool,input_key", [
-    ("Read", "file_path"),
-    ("mcp__lean_ctx__ctx_read", "path"),
+@pytest.mark.parametrize("tool,input_key,subdir,escaped_quote", [
+    ("Read", "file_path", ".", None),
+    ("mcp__lean_ctx__ctx_read", "path", ".", None),
+    ("mcp__lean_ctx__ctx_read", "paths", ".", None),
+    ("exec", "paths", ".", None),
+    ("exec", "paths", "project [brackets] {braces}", None),
+    ("exec", "path", "project [brackets] {braces}", None),
+    ("exec", "path", "project \\", '"'),
+    ("exec", "paths", "project \\", '"'),
+    ("exec", "path", "project \\", "'"),
+    ("exec", "paths", "project \\", "'"),
 ])
-def test_native_successful_skill_read_counts_use(roots, tool, input_key):
+def test_native_successful_skill_read_counts_use(roots, tool, input_key, subdir, escaped_quote):
+    """Count literal skill loads once and honor the last duplicate JS field."""
+    roots[layer.PROJECT] /= subdir
     path = managed_skill(roots)
-    post_tool(roots, tool, {input_key: str(path)})
+    second = managed_skill(roots, "second-reader") if input_key == "paths" else None
+    value = [str(path), str(second), str(path), 123, [str(path)], None, True] if second else str(path)
+    serialized = json.dumps(value)
+    if escaped_quote:
+        serialized = serialized.replace("/", r"\/").replace('"', escaped_quote)
+    arguments = (f"await tools.mcp__lean_ctx__ctx_read({{{input_key}: {serialized}}});"
+                 if tool == "exec" else {input_key: value})
+    post_tool(roots, tool, arguments)
     assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 1
+    if second:
+        assert sidecar.read(layer.PROJECT, "second-reader", roots[layer.PROJECT])["use"] == 1
+    if tool == "exec":
+        for initial, final, count in ((json.dumps(value), "null", 1), ("null", json.dumps(value), 2)):
+            arguments = f"await tools.mcp__lean_ctx__ctx_read({{{input_key}: {initial}, {input_key}: {final}}});"
+            post_tool(roots, tool, arguments)
+            for name in ("native-reader", "second-reader") if second else ("native-reader",):
+                assert sidecar.read(layer.PROJECT, name, roots[layer.PROJECT])["use"] == count
 
 
 @pytest.mark.parametrize("tool,input_key,command", [

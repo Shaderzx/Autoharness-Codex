@@ -82,6 +82,7 @@ def test_sweep_preserves_all_unmanaged_temporary_files(tmp_path):
 
 
 def test_private_key_redaction_covers_whole_block_and_json_escaped_lines():
+    """Ensure raw and JSON-escaped private keys remain fully redacted."""
     pem = "-----BEGIN PRIVATE KEY-----\nFAKEKEYMATERIAL0123456789\n-----END PRIVATE KEY-----"
     for value in (pem, json.dumps({"output": pem})):
         cleaned = redact.redact(value)
@@ -90,15 +91,18 @@ def test_private_key_redaction_covers_whole_block_and_json_escaped_lines():
         assert redact.redact(cleaned) == cleaned
 
 
-def test_failed_umbrella_update_cannot_archive_absorbed_skill(tmp_path):
+@pytest.mark.parametrize("retire_first", [False, True])
+def test_failed_umbrella_update_cannot_archive_absorbed_skill(tmp_path, retire_first):
+    """Preserve a sibling when its absorbing update fails in either proposal order."""
     roots = {"project": tmp_path / "p", "global": tmp_path / "g"}
     assert promoter.promote(proposal(), roots=roots)["ok"]
     child = proposal(name="date-case", body=BODY.replace("name: dates", "name: date-case"))
     assert promoter.promote(child, roots=roots)["ok"]
-    intent_queue.append("fold", {"action": "patch", "name": "dates", "old_string": "absent text",
-                                  "new_string": "extra rule", "reason": "fold", "evidence": "overlap"}, roots["project"])
-    intent_queue.append("fold", {"action": "delete", "name": "date-case", "absorbed_into": "dates",
-                                  "reason": "fold", "evidence": "overlap"}, roots["project"])
+    intents = [{"action": "patch", "name": "dates", "old_string": "absent text",
+                "new_string": "extra rule", "reason": "fold", "evidence": "overlap"},
+               {"action": "delete", "name": "date-case", "absorbed_into": "dates",
+                "reason": "fold", "evidence": "overlap"}]
+    intent_queue.append_many("fold", intents[::-1] if retire_first else intents, roots["project"])
     results = promoter.drain("fold", roots=roots)
     assert not any(row["ok"] for row in results)
     assert skill_store.exists("project", "date-case", roots["project"])

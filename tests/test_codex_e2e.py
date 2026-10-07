@@ -242,6 +242,7 @@ def test_interactive_stage_is_drained_by_stop_and_grouped_index_recalled(sandbox
 
 
 def test_lifecycle_eviction_uses_real_prompt_and_read_events(sandbox):
+    """Keep batch-loaded skills and archive unused peers through native hooks."""
     sandbox["env"]["CODEX_AUTOHARNESS_MATURITY_PROJECT"] = "2"
     sandbox["env"]["CODEX_AUTOHARNESS_CAPACITY_PROJECT"] = "1"
     root = sandbox["roots"][layer.PROJECT]
@@ -249,7 +250,7 @@ def test_lifecycle_eviction_uses_real_prompt_and_read_events(sandbox):
         assert json.loads(cli(sandbox, "stage", payload=proposal(name)).stdout)["ok"]
     frequent = skill_store.skill_path(layer.PROJECT, "frequent-date", root)
     hook(sandbox, "PostToolUse", tool_name="mcp__lean_ctx__ctx_read",
-         tool_input={"path": str(frequent)}, tool_response={"content": []})
+         tool_input={"paths": [str(frequent), str(frequent)]}, tool_response={"content": []})
     for turn in ("one", "two"):
         hook(sandbox, "UserPromptSubmit", turn_id=turn, prompt="Format a date.")
 

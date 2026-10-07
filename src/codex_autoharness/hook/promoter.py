@@ -386,19 +386,23 @@ def drain(run_id, *, roots=None, repo_name=None):
 
 
 def _drain(run_id, *, roots=None, repo_name=None):
+    """Publish queued updates before dependent retirements and account for results."""
     roots = roots or {}
     recover(roots)
     sweep(roots)
     proot = roots.get(layer.PROJECT)
     intents = intent_queue.read(run_id, proot)
-    verdicts = []
+    verdicts = [None] * len(intents)
     failed_names = set()
-    for intent in intents:
+    # Publish absorbing content before retiring siblings, preserving result order.
+    ordered = sorted(enumerate(intents), key=lambda item:
+                     item[1].get("action") == "delete" and bool(item[1].get("absorbed_into")))
+    for index, intent in ordered:
         if intent.get("action") == "delete" and intent.get("absorbed_into") in failed_names:
             verdict = _reject("delete", None, [("dependency", "absorbing skill failed earlier in this run")])
         else:
             verdict = promote(intent, roots=roots, repo_name=repo_name)
-        verdicts.append(verdict)
+        verdicts[index] = verdict
         if not verdict["ok"]:
             failed_names.add(intent.get("name"))
     record = _account(run_id, intents, verdicts, proot) if intents else None

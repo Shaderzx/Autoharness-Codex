@@ -229,6 +229,7 @@ spawn.run('window', 'terminated-run', roots={{'project':Path({str(tmp_path / 'pr
 
 
 def test_schema_normalizes_subfiles_and_rejects_duplicates():
+    """Normalize proposal subfiles while rejecting duplicate destination paths."""
     row = proposal(files=[{"path": "references/test.md", "content": "Details"}])
     assert spawn.parse_proposals(json.dumps({"intents": [row]}))[0]["files"] == {"references/test.md": "Details"}
     row["files"] *= 2
@@ -236,7 +237,9 @@ def test_schema_normalizes_subfiles_and_rejects_duplicates():
         spawn.parse_proposals(json.dumps({"intents": [row]}))
 
 
-def test_curator_merges_managed_and_preserves_native(tmp_path):
+@pytest.mark.parametrize("retire_first", [False, True])
+def test_curator_merges_managed_and_preserves_native(tmp_path, retire_first):
+    """Merge managed siblings safely in either proposal order without touching native skills."""
     roots = _roots(tmp_path)
     for name in ("umbrella", "narrow", "native"):
         skill_store.write_body("project", name, GOOD.format(n=name), roots["project"])
@@ -249,8 +252,11 @@ def test_curator_merges_managed_and_preserves_native(tmp_path):
                      evidence="Run the operation against a temporary fixture."),
             proposal(action="delete", name="native", level=None, body=None,
                      evidence="Run the operation against a temporary fixture.")]
+    if retire_first:
+        rows[:2] = rows[:2][::-1]
     verdicts = spawn.run_curator("curator-run", roots=roots, spawn_fn=fake_child(rows))
     assert [v["ok"] for v in verdicts] == [True, True, False]
+    assert [v["action"] for v in verdicts] == [row["action"] for row in rows]
     assert skill_store.read_body("project", "native", roots["project"])
     assert skill_store.read_body("project", "narrow", roots["project"]) is None
     assert "Run and check the operation" in skill_store.read_body("project", "umbrella", roots["project"])
