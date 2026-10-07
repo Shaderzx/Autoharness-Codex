@@ -386,6 +386,7 @@ def drain(run_id, *, roots=None, repo_name=None):
 
 
 def _drain(run_id, *, roots=None, repo_name=None):
+    """Publish queued updates before dependent retirements and account for results."""
     roots = roots or {}
     recover(roots)
     sweep(roots)

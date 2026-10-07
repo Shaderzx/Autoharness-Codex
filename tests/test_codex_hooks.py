@@ -24,6 +24,7 @@ def roots(tmp_path):
 
 
 def managed_skill(roots, name="native-reader"):
+    """Create an owned project skill for hook attribution checks."""
     root = roots[layer.PROJECT]
     skill_store.write_body(layer.PROJECT, name, f"---\nname: {name}\n"
                            "description: Read project conventions.\n---\nUse project conventions.\n", root)
@@ -139,6 +140,7 @@ def test_detached_worker_imports_from_an_unrelated_directory(roots, tmp_path, mo
     ("exec", "path", "project [brackets] {braces}"),
 ])
 def test_native_successful_skill_read_counts_use(roots, tool, input_key, subdir):
+    """Count literal skill loads once and honor the last duplicate JS field."""
     roots[layer.PROJECT] /= subdir
     path = managed_skill(roots)
     second = managed_skill(roots, "second-reader") if input_key == "paths" else None
@@ -149,6 +151,12 @@ def test_native_successful_skill_read_counts_use(roots, tool, input_key, subdir)
     assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 1
     if second:
         assert sidecar.read(layer.PROJECT, "second-reader", roots[layer.PROJECT])["use"] == 1
+    if tool == "exec":
+        for initial, final, count in ((json.dumps(value), "null", 1), ("null", json.dumps(value), 2)):
+            arguments = f"await tools.mcp__lean_ctx__ctx_read({{{input_key}: {initial}, {input_key}: {final}}});"
+            post_tool(roots, tool, arguments)
+            for name in ("native-reader", "second-reader") if second else ("native-reader",):
+                assert sidecar.read(layer.PROJECT, name, roots[layer.PROJECT])["use"] == count
 
 
 @pytest.mark.parametrize("tool,input_key,command", [

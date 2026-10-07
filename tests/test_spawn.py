@@ -162,6 +162,7 @@ def test_schema_normalizes_subfiles_and_rejects_duplicates():
 
 @pytest.mark.parametrize("retire_first", [False, True])
 def test_curator_merges_managed_and_preserves_native(tmp_path, retire_first):
+    """Merge managed siblings safely in either proposal order without touching native skills."""
     roots = _roots(tmp_path)
     for name in ("umbrella", "narrow", "native"):
         skill_store.write_body("project", name, GOOD.format(n=name), roots["project"])

@@ -242,6 +242,7 @@ def test_interactive_stage_is_drained_by_stop_and_grouped_index_recalled(sandbox
 
 
 def test_lifecycle_eviction_uses_real_prompt_and_read_events(sandbox):
+    """Keep batch-loaded skills and archive unused peers through native hooks."""
     sandbox["env"]["CODEX_AUTOHARNESS_MATURITY_PROJECT"] = "2"
     sandbox["env"]["CODEX_AUTOHARNESS_CAPACITY_PROJECT"] = "1"
     root = sandbox["roots"][layer.PROJECT]

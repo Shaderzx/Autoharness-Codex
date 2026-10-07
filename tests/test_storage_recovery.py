@@ -92,6 +92,7 @@ def test_private_key_redaction_covers_whole_block_and_json_escaped_lines():
 
 @pytest.mark.parametrize("retire_first", [False, True])
 def test_failed_umbrella_update_cannot_archive_absorbed_skill(tmp_path, retire_first):
+    """Preserve a sibling when its absorbing update fails in either proposal order."""
     roots = {"project": tmp_path / "p", "global": tmp_path / "g"}
     assert promoter.promote(proposal(), roots=roots)["ok"]
     child = proposal(name="date-case", body=BODY.replace("name: dates", "name: date-case"))

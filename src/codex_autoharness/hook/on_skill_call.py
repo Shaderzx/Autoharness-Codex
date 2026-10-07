@@ -98,11 +98,12 @@ def _shell_paths(command, cwd):
 
 
 def _literal_field(body, key):
+    """Read the last matching literal JS field without executing its value."""
     try:
         fields = ast.parse("{" + body + "}", mode="eval").body
         if not isinstance(fields, ast.Dict):
             return None
-        for field, value in zip(fields.keys, fields.values, strict=True):
+        for field, value in zip(reversed(fields.keys), reversed(fields.values), strict=True):
             name = field.id if isinstance(field, ast.Name) else ast.literal_eval(field)
             if name != key:
                 continue
@@ -116,6 +117,7 @@ def _literal_field(body, key):
 
 
 def _read_paths(event):
+    """Yield observed literal file reads with their working directories."""
     tool = str(event.get("tool_name") or "").split(".")[-1]
     raw_input = event.get("tool_input")
     args = raw_input if isinstance(raw_input, dict) else {}
