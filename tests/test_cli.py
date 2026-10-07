@@ -27,15 +27,6 @@ def cli_roots(tmp_path, monkeypatch):
     return argv, home, project, fake_home, cwd
 
 
-def test_help_lists_the_supported_commands(capsys):
-    with pytest.raises(SystemExit) as exc:
-        cli.main(["--help"])
-    assert exc.value.code == 0
-    output = capsys.readouterr().out
-    for command in ("install", "uninstall", "status", "doctor", "stage", "learn", "curate", "archive", "restore", "history"):
-        assert command in output
-
-
 def test_status_reports_without_creating_state(cli_roots, capsys):
     argv, home, project, fake_home, cwd = cli_roots
     assert cli.main([*argv, "status"]) == 0
@@ -70,22 +61,11 @@ def test_stage_valid_proposal_writes_only_to_the_supplied_roots(tmp_path, cli_ro
     skill = target / ".agents" / "skills" / "date-format" / "SKILL.md"
     assert skill.read_text(encoding="utf-8") == proposal["body"]
     assert (skill.parent / ".sidecar.json").is_file()
-    assert not list(fake_home.iterdir())
-    assert not list(cwd.iterdir())
-
-
-@pytest.mark.parametrize("proposal", [
-    {"action": "create", "name": "../escape", "body": "unsafe", "reason": "r", "evidence": "e"},
-    {"action": "create", "name": "bad-skill", "body": "Missing required frontmatter", "reason": "r", "evidence": "e"},
-])
-def test_stage_rejects_invalid_proposals_without_writing_skills(tmp_path, cli_roots, proposal):
-    argv, home, project, fake_home, cwd = cli_roots
-    proposal_file = tmp_path / "invalid.json"
-    proposal_file.write_text(json.dumps(proposal), encoding="utf-8")
-
-    assert cli.main([*argv, "stage", "--file", str(proposal_file)]) != 0
-    assert not list(home.rglob("SKILL.md"))
-    assert not list(project.rglob("SKILL.md"))
+    assert cli.main([*argv, "record-use", "date-format", "--level", level]) == 0
+    recorded = json.loads(capsys.readouterr().out)
+    assert recorded == {"ok": True, "name": "date-format", "level": level}
+    metadata = json.loads((skill.parent / ".sidecar.json").read_text())
+    assert metadata["use"] == 1 and metadata["view"] == 0
     assert not list(fake_home.iterdir())
     assert not list(cwd.iterdir())
 

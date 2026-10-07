@@ -1,5 +1,24 @@
 # Build verification
 
+## Test suite cleanup
+
+Verified on 2026-10-07: **243 passed**, no failures or skips; Ruff passed.
+The baseline was 574 tests in 42 modules. The retained suite has 24 modules and
+3,543 Python lines, down from 6,359. Runtime code is unchanged.
+
+Removed duplicate helper/hook/dispatcher checks, assertions about constants or
+documentation wording, and a regex test that reimplemented production logic.
+Retained the CLI and native Codex flows, proposer isolation, concurrent workers,
+interrupted-write recovery, ownership and path checks, redaction, and snapshot
+recovery including directory permissions. Remaining content, staging, configuration,
+and metrics checks share fewer setups.
+
+For comparison, statement coverage measured in the pytest process changed from
+90.2% to 88.6%, and branch coverage from 83.9% to 80.4%. These measurements exclude
+subprocess execution; they are not proof of equivalent assertion coverage.
+Coverage was run through an ephemeral `uvx` environment, with no new project
+dependencies or test harness.
+
 ## 0.1.1 — session model inheritance
 
 Verified on 2026-10-07 with Codex CLI 0.160.1. Background learners and curators

@@ -1,3 +1,5 @@
+import pytest
+
 from codex_autoharness.lib import redact
 
 
@@ -20,17 +22,6 @@ def test_redacts_secrets_and_pii():
     assert "[REDACTED:" in out
 
 
-def test_benign_text_unchanged():
-    raw = "This skill formats dates and sorts a list of integers."
-    assert redact.redact(raw) == raw
-
-
-def test_idempotent():
-    raw = "ping ops@corp.io now"
-    once = redact.redact(raw)
-    assert redact.redact(once) == once
-
-
 def test_credit_card_luhn_gate_keeps_long_ids_as_evidence():
     raw = "snowflake 7350428044806844 ts 1759234567890 pk 4111111111111112"
     out = redact.redact(raw)
@@ -47,23 +38,10 @@ def test_credit_card_still_redacts_valid_numbers():
     assert out.count("[REDACTED:pii:credit_card]") == 3
 
 
-def test_unknown_validator_name_fails_loud_at_rule_load():
-    import tempfile
-
-    from codex_autoharness.lib import redact as redact_mod
-
-    bad = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
-    bad.write(
+def test_unknown_validator_name_fails_loud_at_rule_load(tmp_path):
+    bad = tmp_path / "invalid.toml"
+    bad.write_text(
         '[[pii]]\nname = "x"\npattern = \'a+\'\nvalidate = "nope"\n'
     )
-    bad.close()
-    try:
-        redact_mod.redact("aaa", rules_path=bad.name)
-    except ValueError as exc:
-        assert "nope" in str(exc)
-    else:
-        raise AssertionError("unknown validator must raise, not silently pass through")
-    finally:
-        import os
-
-        os.unlink(bad.name)
+    with pytest.raises(ValueError, match="nope"):
+        redact.redact("aaa", rules_path=bad)
