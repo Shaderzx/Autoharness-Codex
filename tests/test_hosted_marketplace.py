@@ -21,6 +21,7 @@ MARKETPLACE = integration.PLUGIN_ID.split("@", 1)[1]
 
 @pytest.mark.skipif(not shutil.which("codex"), reason="Codex CLI is not installed")
 def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
+    """Verify native updates preserve ref pins, hook trust records, and user files."""
     source, home, work = (tmp_path / name for name in ("source", "codex-home", "work"))
     for directory in (source, home, work):
         directory.mkdir()
@@ -43,27 +44,32 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
                GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
 
     def git(*args):
+        """Run a checked Git command against the isolated source fixture."""
         return subprocess.run(["git", "-C", str(source), *args], env=env, capture_output=True,
                               text=True, check=True, timeout=10).stdout.strip()
 
     def codex(*args, fixture_home=home):
+        """Run a native plugin command in the selected fixture configuration home."""
         run = subprocess.run(["codex", *args, "--json"], cwd=work, env={**env, "CODEX_HOME": str(fixture_home)},
                              capture_output=True, text=True, timeout=20)
         assert run.returncode == 0, run.stderr
         return json.loads(run.stdout)
 
     def commit():
+        """Commit fixture changes and return their revision for update and pin checks."""
         git("add", ".")
         git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "fixture")
         return git("rev-parse", "HEAD")
 
     @contextmanager
     def native():
+        """Yield an initialized app-server RPC client and close its fixture process."""
         process = subprocess.Popen(["codex", "app-server", "--stdio"], cwd=work, env=env, text=True,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         messages = queue.Queue()
 
         def receive():
+            """Queue native app-server messages for the bounded RPC response loop."""
             for line in process.stdout:
                 messages.put(json.loads(line))
 
@@ -71,6 +77,7 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
         reader.start()
 
         def rpc(number, method, params):
+            """Send one request and return its result while ignoring notifications."""
             process.stdin.write(json.dumps({"id": number, "method": method, "params": params}) + "\n")
             process.stdin.flush()
             deadline = time.monotonic() + 10
