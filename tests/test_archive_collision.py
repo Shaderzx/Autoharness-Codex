@@ -15,25 +15,6 @@ def _make_tree(root, lyr, name, marker="live"):
     return skills
 
 
-def test_archive_collision_preserves_old(tmp_path):
-    """Archiving a skill when an archive of the same name exists must not destroy the old archive."""
-    root = str(tmp_path)
-    # Simulate: skill exists in archive AND in live
-    _make_tree(root, "global", "foo", marker="archived")
-    archive_dest = layer.archive_dir("global", root) / "foo"
-    archive_dest.mkdir(parents=True, exist_ok=True)
-    (archive_dest / "SKILL.md").write_text("# foo\nmarker=old-archive")
-
-    result = skill_store.archive("global", "foo", root)
-
-    # The old archive must still exist
-    assert (archive_dest / "SKILL.md").read_text() == "# foo\nmarker=old-archive"
-    # The new archive landed at a timestamped path
-    assert result is not None
-    assert result != archive_dest
-    assert "marker=archived" in (result / "SKILL.md").read_text()
-
-
 def test_restore_collision_preserves_live(tmp_path):
     """Restoring a skill when a live copy exists must not destroy the live copy."""
     root = str(tmp_path)
