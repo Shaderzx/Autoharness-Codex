@@ -169,12 +169,17 @@ Set these variables in the environment that starts Codex. Hooks read them when t
 | `CODEX_AUTOHARNESS_GRADUATION_SUSPENDED` | `0` | Set to `1` to suspend zero-use graduation review; capacity contention remains active. |
 | `CODEX_AUTOHARNESS_SNAPSHOT_KEEP` | `5` | Curator snapshots retained per layer. |
 | `CODEX_AUTOHARNESS_CODEX_BIN` | `codex` | Codex executable used by the background proposer. |
+| `CODEX_AUTOHARNESS_REFLECTOR_CARRIER` | `bundle` | `resume` or `fork` reuses a dedicated isolated learner session; requires Codex's corresponding `exec` subcommand. |
 | `CODEX_AUTOHARNESS_TIMEOUT_S` | `180` | Time limit for a proposer process. |
 | `CODEX_AUTOHARNESS_NOTIFY` | unset | Set to `desktop` for optional local run notifications. |
 | `CODEX_AUTOHARNESS_NOTIFY_CMD` | unset | Optional command receiving run JSON on stdin; parsed as an argument vector, never a shell expression. |
 | `CODEX_AUTOHARNESS_NOTIFY_TIMEOUT_S` | `5` | Maximum notification time per channel. |
 
 Advanced deployments can set `CODEX_AUTOHARNESS_PROJECT_ROOT` and `CODEX_AUTOHARNESS_GLOBAL_ROOT` to alternate **`.agents` roots**. These environment values differ from `--project`, which takes a project directory, and `--home`, which takes a home directory. Prefer the CLI options for manual commands.
+
+Session reuse is optional. `resume` continues the learner's own history; `fork` starts a new learner branch from that history. Both receive the same bounded redacted bundle and use the triggering session's model, provider, and reasoning settings. The active Codex session is never resumed or forked. Curators and calls without a session identity stay fresh; manual `learn` needs an explicit `--session-id` to reuse history. Prior learner messages are background only; proposal evidence must still occur in the current bundle.
+
+Reuse stores sanitized learner rollouts under `.agents/codex-autoharness/learner-sessions/` with private permissions. The cache retains user/assistant text only, discards persisted tools, capability roots, instructions and permission settings, and uses Codex's self-contained legacy history format. At most five histories are kept per project, each at most 2 MB; larger, malformed, or unavailable histories start fresh. Provider, model, reasoning, Codex-home, schema, or instruction changes get separate histories. A failed resume/fork is retried fresh once only when it has produced no proposal output; completed or malformed output is never retried. Unsupported resume/fork commands therefore fall back to a fresh bundle process. Removing `learner-sessions/` discards the optimization without removing learned skills. Reuse can increase context usage and does not guarantee provider-side prompt caching or better lessons.
 
 Skills are protected during probation. At maturity, a skill with neither loads nor views can be archived. Skills with loads compete by loads divided by requests since creation; low-rate entries are archived only when the mature pool exceeds capacity. Probationary skills do not count against these caps, so capacity is not a hard bound on the entire library or its index. These defaults need calibration against real use.
 
