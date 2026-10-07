@@ -107,7 +107,13 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
         counters.bump_request(layer.PROJECT, root)
         counters.bump_session("hot-counter", root)
         assert calls == []
-    assert "learned" not in status(linked_worktree)
+    for name in ("learned", "unmatched-skill"):
+        path = linked_worktree / root.relative_to(main_repo) / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("Untracked worktree instructions.\n")
+    worktree_status = status(linked_worktree)
+    assert "learned" not in worktree_status
+    assert "unmatched-skill/SKILL.md" in worktree_status
     archived = skill_store.archive(layer.PROJECT, "learned", root)
     assert "learned" not in status()
     assert skill_store.restore(layer.PROJECT, archived.name, root) == learned.parent
