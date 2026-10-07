@@ -70,7 +70,11 @@ def _funnel(lyr, root):
                 run = json.loads(path.read_text())
             except (ValueError, OSError):
                 continue  # a corrupt account never breaks reporting
+            if not isinstance(run, dict) or not isinstance(run.get("verdicts", []), list):
+                continue
             for v in run.get("verdicts", []):
+                if not isinstance(v, dict):
+                    continue
                 proposed += 1
                 if v.get("ok"):
                     landed += 1

@@ -26,6 +26,8 @@ def test_usage_funnel_and_categories_are_read_only(tmp_path):
     runs.mkdir()
     (runs / "one.json").write_text(json.dumps({"verdicts": [
         {"ok": True, "findings": []}, {"ok": False, "findings": ["structure"]}]}))
+    (runs / "broken.json").write_text("[]")
+    (runs / "bad-verdicts.json").write_text('{"verdicts": [null]}')
     before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     result = metrics.collect(roots)["project"]
     assert result["use_total"] == 3 and result["view_total"] == 1
