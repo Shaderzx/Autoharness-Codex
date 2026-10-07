@@ -1,5 +1,33 @@
 # Build verification
 
+## GitHub-hosted marketplace and native updates
+
+Verified on 2026-10-07 with Codex CLI 0.160.1. An isolated configuration home
+successfully installed the real public repository using
+`codex plugin marketplace add Shaderzx/Autoharness-Codex --ref main` and
+`codex plugin add codex-autoharness@codex-autoharness-local`. Codex recorded the
+canonical HTTPS Git origin and installed version 0.1.1. Explicit native
+`marketplace upgrade` also succeeded. User configuration and hook trust were
+not changed by these smoke checks.
+
+The retained offline integration test runs actual Codex against a temporary Git
+repository, with an origin rewrite confined to its child environment. It verifies:
+
+- Plugin startup automatically refreshes a moving Git ref, including content
+  changes with the same plugin version.
+- A changed hooks source has `modified` trust status; existing trust records
+  remain unchanged until the user reviews the source.
+- Explicit upgrade is a no-op at the current revision and activates a new
+  plugin version when the remote manifest version changes.
+- A full commit SHA remains pinned through explicit upgrades.
+
+Run `python3 -m pytest -q tests/test_hosted_marketplace.py`. The marketplace
+fixture needs no network access, model provider, or user credentials. The test
+skips if Codex is absent.
+Automatic updates are provided by Codex's existing
+[plugin startup task](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/core-plugins/src/manager.rs#L2812).
+There is no custom updater, release scheduler, or public plugin directory listing.
+
 ## 0.1.1 — session model inheritance
 
 Verified on 2026-10-07 with Codex CLI 0.160.1. Background learners and curators
