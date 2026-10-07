@@ -9,7 +9,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 
-from codex_autoharness.lib import layer, ledger, sidecar, skill_store
+from codex_autoharness.lib import git_exclude, layer, ledger, sidecar, skill_store
 from codex_autoharness.lib.locking import lock_root
 
 
@@ -127,7 +127,7 @@ def import_layer(lyr, root=None, *, deadline=None):
                                             _copy_tree(skill, copied, deadline=deadline)
                                             os.stat(skill_store.SKILL_FILE, dir_fd=copied, follow_symlinks=False)
                                         _publish(staged, name, dst)
-                            result["imported"].append(name)
+                                        result["imported"].append(name)
                         except (OSError, ValueError) as exc:
                             result["skipped"][name] = "destination exists" if isinstance(exc, FileExistsError) else str(exc)
                             if isinstance(exc, OSError) and exc.errno == errno.ENOTSUP:
@@ -135,6 +135,12 @@ def import_layer(lyr, root=None, *, deadline=None):
                                 break
     except (OSError, ValueError) as exc:
         result["skipped"]["."] = str(exc)
+    if result["imported"]:
+        try:
+            with lock_root(root):
+                git_exclude.sync(root)
+        except (OSError, ValueError):
+            pass  # Published imports remain valid when the optional Git refresh fails.
     return result
 
 

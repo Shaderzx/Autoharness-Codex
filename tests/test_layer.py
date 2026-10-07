@@ -1,11 +1,21 @@
+import shutil
 import subprocess
 
 import pytest
 
-from codex_autoharness.lib import layer
+from codex_autoharness.hook import on_session_start, on_skill_call, promoter
+from codex_autoharness.lib import (
+    counters,
+    git_exclude,
+    layer,
+    sidecar,
+    skill_import,
+    skill_store,
+)
 
 
 def _git(cwd, *args):
+    """Run fixture Git commands with local commit identity and fail on errors."""
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
         cwd=cwd, check=True, capture_output=True,
@@ -46,10 +56,133 @@ def test_project_root_repo_subdir_stays_cwd_no_jump_to_repo_root(main_repo, monk
 
 
 def test_project_root_linked_worktree_maps_to_main_root(linked_worktree, main_repo, monkeypatch):
+    """Keep linked worktree learning in the main checkout's project library."""
     assert _project_root_at(monkeypatch, linked_worktree) == main_repo / ".agents"
 
 
+def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_repo, linked_worktree, tmp_path, monkeypatch):
+    """Exclude owned runtime files while preserving authored content and cheap counters."""
+    root = main_repo / "nested[?]" / ".agents"
+    roots = {layer.GLOBAL: tmp_path / "home" / ".agents", layer.PROJECT: root}
+    exclude = main_repo / ".git" / "info" / "exclude"
+    original = b"# user's local rules\nprivate.txt"  # retain an unterminated final line
+    exclude.write_bytes(original)
+    user = skill_store.skill_path(layer.PROJECT, "user-skill", root)
+    user.parent.mkdir(parents=True)
+    user.write_text("User instructions.\n")
+    tracked = skill_store.skill_path(layer.PROJECT, "tracked-skill", root)
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("Tracked instructions.\n")
+    _git(main_repo, "add", str(tracked.relative_to(main_repo)))
+    _git(main_repo, "commit", "-q", "-m", "track chosen skill")
+    sidecar.create(layer.PROJECT, "tracked-skill", 0, root)
+    tracked.write_text("Changed tracked instructions.\n")
+    new_guide = tracked.parent / "references" / "new-guide.md"
+    new_guide.parent.mkdir()
+    new_guide.write_text("A new user-authored supporting file.\n")
+    intent = {"action": "create", "name": "learned", "level": layer.PROJECT,
+              "body": "---\nname: learned\ndescription: Use when formatting dates.\n---\nUse strftime.\n",
+              "reason": "Repeated formatting", "evidence": "Format a date."}
+    assert promoter.promote(intent, roots=roots)["ok"]
+    learned = skill_store.skill_path(layer.PROJECT, "learned", root)
+    on_skill_call.on_skill_read({"tool_name": "Read", "tool_input": {"file_path": str(learned)},
+                               "tool_response": {"exit_code": 0}}, roots=roots)
+    assert sidecar.read(layer.PROJECT, "learned", root)["use"] == 1
+
+    def status(cwd=main_repo):
+        """Report tracked changes and every untracked file in the selected worktree."""
+        return subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"],
+                                       cwd=cwd, text=True)
+
+    changed = status()
+    assert "learned" not in changed and "codex-autoharness" not in changed, changed
+    assert "user-skill/SKILL.md" in changed and "tracked-skill/SKILL.md" in changed
+    assert "tracked-skill/references/new-guide.md" in changed
+    assert exclude.read_bytes().startswith(original + b"\n")
+    before = exclude.stat().st_mtime_ns
+    on_session_start.on_session_start(roots=roots)
+    assert exclude.stat().st_mtime_ns == before
+    with monkeypatch.context() as patcher:
+        calls = []
+        original_run = subprocess.run
+
+        def spy_run(*args, **kwargs):
+            """Record subprocess commands while preserving their actual results."""
+            calls.append(args[0])
+            return original_run(*args, **kwargs)
+
+        patcher.setattr(git_exclude.subprocess, "run", spy_run)
+        sidecar.bump_use(layer.PROJECT, "learned", root)
+        sidecar.bump_view(layer.PROJECT, "learned", root)
+        counters.bump_request(layer.PROJECT, root)
+        counters.bump_session("hot-counter", root)
+        assert calls == []
+    for name in ("learned", "unmatched-skill"):
+        path = linked_worktree / root.relative_to(main_repo) / "skills" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("Untracked worktree instructions.\n")
+    worktree_status = status(linked_worktree)
+    assert "learned" not in worktree_status
+    assert "unmatched-skill/SKILL.md" in worktree_status
+    archived = skill_store.archive(layer.PROJECT, "learned", root)
+    assert "learned" not in status()
+    assert skill_store.restore(layer.PROJECT, archived.name, root) == learned.parent
+    (learned.parent / sidecar.FILENAME).unlink()
+    on_session_start.on_session_start(roots=roots)
+    assert "learned/SKILL.md" in status()  # stale owned rules must not hide a user's replacement
+    another = main_repo / "other project" / ".agents"
+    skill_store.write_body(layer.PROJECT, "other-skill", "Other instructions.\n", another)
+    sidecar.create(layer.PROJECT, "other-skill", 0, another)
+    on_session_start.on_session_start(roots=roots)
+    assert "other-skill" not in status()  # one root's refresh must retain another root's rules
+    owned = main_repo / "symlink-target"
+    owned.mkdir()
+    (owned / "SKILL.md").write_text("Keep a linked user skill visible.\n")
+    sidecar.create(layer.PROJECT, "linked-skill", 0, root)
+    (root / "skills" / "linked-skill" / sidecar.FILENAME).replace(owned / sidecar.FILENAME)
+    (root / "skills" / "linked-skill").rmdir()
+    (root / "skills" / "linked-skill").symlink_to(owned, target_is_directory=True)
+    on_session_start.on_session_start(roots=roots)
+    assert "linked-skill" in status()
+    with monkeypatch.context() as patcher:
+        original_land = promoter._land
+
+        def failed_land(*args):
+            """Fail after ownership publication to exercise exclusion rollback."""
+            original_land(*args)
+            raise OSError("after ownership write")
+
+        patcher.setattr(promoter, "_land", failed_land)
+        failed = {**intent, "name": "failed-create", "body": intent["body"].replace("learned", "failed-create")}
+        assert not promoter.promote(failed, roots=roots)["ok"]
+    skill_store.write_body(layer.PROJECT, "failed-create", "User replacement.\n", root)
+    assert "failed-create/SKILL.md" in status()
+    skill_store.write_body(layer.PROJECT, "import-replacement", "Managed instructions.\n", another)
+    sidecar.create(layer.PROJECT, "import-replacement", 0, another)
+    replacement = skill_store.skill_path(layer.PROJECT, "import-replacement", another)
+    shutil.rmtree(replacement.parent)  # simulate external removal without a startup refresh
+    source = another.parent / ".claude" / "skills" / "import-replacement"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("Imported user instructions.\n")
+    guide = source / "references" / "new-guide.md"
+    guide.parent.mkdir()
+    guide.write_text("Imported author instructions.\n")
+    assert skill_import.import_layer(layer.PROJECT, another)["imported"] == ["import-replacement"]
+    imported_status = status()
+    assert ".agents/skills/import-replacement/SKILL.md" in imported_status
+    assert ".agents/skills/import-replacement/references/new-guide.md" in imported_status
+    assert "other-skill" not in imported_status
+    saved = exclude.read_bytes()
+    exclude.unlink()
+    outside = tmp_path / "external-exclude"
+    outside.write_bytes(saved)
+    exclude.symlink_to(outside)
+    on_session_start.on_session_start(roots={**roots, layer.PROJECT: another})
+    assert outside.read_bytes() == saved and exclude.is_symlink()
+
+
 def test_project_root_worktree_subdir_maps_to_main_root(linked_worktree, main_repo, monkeypatch):
+    """Resolve a linked worktree's nested directory to the main project library."""
     sub = linked_worktree / "src"
     sub.mkdir()
     assert _project_root_at(monkeypatch, sub) == main_repo / ".agents"

@@ -15,6 +15,7 @@ import uuid
 from codex_autoharness.lib import (
     atomic,
     counters,
+    git_exclude,
     intent_queue,
     layer,
     ledger,
@@ -201,21 +202,26 @@ def _finish_transaction(journal, backup):
 
 
 def _rollback_transaction(record, root, journal, backup):
+    """Restore the prior skill tree and refresh exclusions before releasing root locks."""
     name = record["name"]
     target = layer.symbol_dir(record["level"], name, root)
     if record["had_target"]:
         if not backup.is_dir():
             raise ValueError("pending transaction backup is missing")
         _check_backup(root, backup)
-    if target.exists():
-        _preflight_paths(record["level"], name, root, {})
-        shutil.rmtree(target)
-    if record["had_target"]:
-        shutil.copytree(backup, target)
-    _finish_transaction(journal, backup)
+    try:
+        if target.exists():
+            _preflight_paths(record["level"], name, root, {})
+            shutil.rmtree(target)
+        if record["had_target"]:
+            shutil.copytree(backup, target)
+        _finish_transaction(journal, backup)
+    finally:
+        git_exclude.sync(root)
 
 
 def _check_backup(root, backup):
+    """Reject redirected paths and unsupported file types before restoring a backup."""
     for directory, dirs, files in os.walk(backup, followlinks=False):
         for leaf in dirs + files:
             path = layer.checked_path(root, os.path.relpath(os.path.join(directory, leaf), root))
@@ -246,6 +252,7 @@ def recover(roots=None):
                 committed = None  # interrupted ledger append: restore the valid backup
             if committed:
                 _finish_transaction(journal, backup)
+                git_exclude.sync(root)
             else:
                 _rollback_transaction(record, root, journal, backup)
 

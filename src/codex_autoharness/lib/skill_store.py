@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
-from codex_autoharness.lib import atomic, layer, sidecar
+from codex_autoharness.lib import atomic, git_exclude, layer, sidecar
 from codex_autoharness.lib.locking import lock_root
 
 SKILL_FILE = "SKILL.md"
@@ -81,6 +81,7 @@ def archive(lyr, name, root=None):
 
 
 def _archive(lyr, name, root=None):
+    """Move an owned skill to a collision-safe archive and refresh local exclusions."""
     sdir = layer.symbol_dir(lyr, name, root)
     if not sdir.exists():
         return None
@@ -90,6 +91,7 @@ def _archive(lyr, name, root=None):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest = _collision_safe_dest(dest)
     os.replace(sdir, dest)
+    git_exclude.sync(layer._root(lyr, root))
     return dest
 
 
@@ -149,10 +151,12 @@ def restore_snapshot(lyr, name, snapshot, root=None):
             for directory in sorted(directory_modes, key=lambda path: len(path.parts), reverse=True):
                 directory.chmod(directory_modes[directory])
             os.replace(staged, dest)
+        git_exclude.sync(layer._root(lyr, root))
         return dest
 
 
 def _restore(lyr, name, root=None):
+    """Restore an owned archive without replacing a live skill and refresh exclusions."""
     layer._check_name(name)
     src = layer.checked_path(layer._root(lyr, root), "skills", ".archive", name)
     if not src.exists():
@@ -172,6 +176,7 @@ def _restore(lyr, name, root=None):
         raise ValueError("restore target already exists; archive it first")
     dest.parent.mkdir(parents=True, exist_ok=True)
     os.replace(src, dest)
+    git_exclude.sync(layer._root(lyr, root))
     return dest
 
 

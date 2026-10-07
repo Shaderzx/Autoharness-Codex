@@ -3,6 +3,7 @@ import errno
 import json
 import os
 import stat
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -36,12 +37,38 @@ def _roots(tmp_path):
     return {"global": tmp_path / "home" / ".agents", "project": tmp_path / "repo" / ".agents"}
 
 
-def test_import_preserves_files_and_modes_without_ownership_or_overwrites(tmp_path):
+@pytest.mark.parametrize("refresh_failure", [None, "lock-enter", "lock-exit", "sync", "root-changed"])
+def test_import_preserves_files_and_modes_without_ownership_or_overwrites(tmp_path, monkeypatch, refresh_failure):
     """Imports preserve source bytes and executable bits without ownership or later overwrite."""
     roots = _roots(tmp_path)
     sources = {level: _skill(root.parent) for level, root in roots.items()}
     original = {level: {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()}
                 for level, source in sources.items()}
+
+    original_lock, original_sync = skill_import.lock_root, skill_import.git_exclude.sync
+    locks = {}
+
+    @contextmanager
+    def lock(root):
+        """Inject refresh-lock faults after the import's publication lock succeeds."""
+        locks[root] = locks.get(root, 0) + 1
+        refresh = locks[root] == 2
+        if refresh and refresh_failure in ("lock-enter", "root-changed"):
+            error = ValueError if refresh_failure == "root-changed" else OSError
+            raise error("refresh lock unavailable")
+        with original_lock(root):
+            yield
+        if refresh and refresh_failure == "lock-exit":
+            raise OSError("refresh lock release failed")
+
+    def sync(root):
+        """Inject an optional Git refresh failure after publication completes."""
+        if refresh_failure == "sync":
+            raise OSError("Git exclusion refresh unavailable")
+        return original_sync(root)
+
+    monkeypatch.setattr(skill_import, "lock_root", lock)
+    monkeypatch.setattr(skill_import.git_exclude, "sync", sync)
 
     result = skill_import.import_skills(roots)
     for level, root in roots.items():
