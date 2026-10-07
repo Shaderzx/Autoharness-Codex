@@ -31,7 +31,7 @@ def parser():
         commands.add_parser(name, help=help_text)
     learn = commands.add_parser("learn", help="Distill a supplied Codex JSONL transcript now")
     learn.add_argument("--transcript", type=Path, required=True, help="Exact session transcript to distill")
-    learn.add_argument("--session-id", default="manual")
+    learn.add_argument("--session-id", help="Stable session identity; required for optional learner-history reuse")
     stage = commands.add_parser("stage", help="Validate and apply one JSON proposal through the sole writer")
     stage.add_argument("--file", type=Path, help="Proposal JSON file; default stdin")
     stage.add_argument("--queue-only", action="store_true", help="Queue for the next Stop hook instead of applying now")
@@ -52,11 +52,13 @@ def parser():
 
 
 def _emit(value):
+    """Print a JSON result and return its success status."""
     print(json.dumps(value, indent=2, ensure_ascii=False, default=str))
     return 0 if value.get("ok", True) else 1
 
 
 def _history(args, roots):
+    """Read recent run accounts or one managed skill ledger."""
     root = roots[args.level]
     if args.name:
         if not sidecar.is_agent_created(args.level, args.name, root):
@@ -68,6 +70,7 @@ def _history(args, roots):
 
 
 def _archive_restore(args, roots):
+    """Move managed skills between the live library and archive."""
     root = roots[args.level]
     if args.command == "archive":
         if not sidecar.is_agent_created(args.level, args.name, root):
