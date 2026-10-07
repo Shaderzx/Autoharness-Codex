@@ -15,7 +15,14 @@ The CLI also supports explicit learning from a transcript when hooks are unavail
 
 ## Install
 
-From this checkout:
+Clone the repository and enter its directory:
+
+```sh
+git clone https://github.com/Shaderzx/Autoharness-Codex.git
+cd Autoharness-Codex
+```
+
+Then install the plugin:
 
 ```sh
 codex plugin marketplace add .
@@ -83,7 +90,7 @@ The transcript command runs synchronously and inherits the last model context re
 | `index` | Prints the grouped index of managed project and global skills. |
 | `learn --transcript FILE` | Distills the explicitly supplied Codex transcript. |
 | `curate` | Runs library consolidation now, with a snapshot before changes. |
-| `history` | Shows recent run accounts, including accepted and rejected proposals. |
+| `history` | Shows recent run results, including accepted and rejected proposals. |
 | `history NAME --level project` | Shows a managed skill's provenance ledger. |
 | `archive NAME --level project` | Moves a managed skill out of active recall. |
 | `restore NAME --level project` | Restores an archived managed skill, unless its live name is occupied. |
@@ -111,7 +118,7 @@ A successful `SKILL.md` read is a **load proxy**. It does not prove that Codex f
 
 The reflector runs as an isolated, read-only `codex exec` process. It receives bounded, redacted transcript material and skill context, then returns structured JSON proposals. A temporary Codex home copies the selected model/provider settings and file-based authentication; host hooks, plugins, shell tools, and MCP servers are excluded. It does not write the skill library. The promoter validates each proposal and is the only code that applies it. Child processes carry a recursion guard so reflection does not trigger more reflection.
 
-Credentials stored only in an OS keyring are not migrated into the isolated proposer. OAuth refreshes update its temporary credential copy and are not saved back to your real Codex home. An authentication failure appears in run history and leaves the pending transcript watermark unchanged.
+Credentials stored only in an OS keyring are not migrated into the isolated proposer. OAuth refreshes update its temporary credential copy and are not saved back to your real Codex home. An authentication failure appears in run history and leaves the saved transcript position unchanged.
 
 ## Files and ownership
 
@@ -161,7 +168,7 @@ Skills are protected during probation. At maturity, a skill with neither loads n
 
 Learning sends selected session content to the Codex model provider configured for the proposer and consumes model usage. Pattern-based redaction removes recognized secrets and personal information before handoff, but cannot identify every sensitive fact. Captured records and windows have size limits, so a long session may lose detail. The managed library bundle is capped at 250 KB, the total handoff at 600 KB, and each model response at 12 proposals. Large libraries can have skills omitted from a pass.
 
-A failed or malformed proposer response records an error without enqueuing changes or advancing the captured transcript watermark. Inspect `history` for the outcome; an empty successful run means the model found nothing worth keeping.
+A failed or malformed proposer response records an error without queuing changes or advancing the saved transcript position. Inspect `history` for the outcome; an empty successful run means the model found nothing worth keeping.
 
 The validator checks ownership, paths, structure, references, provenance fields, and selected unsafe content. Automatic proposer output must quote evidence found verbatim in the supplied redacted episode or, for curation, the supplied managed library. This verifies the quote's source, not the lesson's truth. The checks do not detect every prompt injection or establish that a script is safe to execute. Learned instructions and support scripts should be reviewed with the same care as any other agent-authored code.
 
