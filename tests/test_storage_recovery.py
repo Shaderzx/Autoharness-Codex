@@ -82,6 +82,7 @@ def test_sweep_preserves_all_unmanaged_temporary_files(tmp_path):
 
 
 def test_private_key_redaction_covers_whole_block_and_json_escaped_lines():
+    """Ensure raw and JSON-escaped private keys remain fully redacted."""
     pem = "-----BEGIN PRIVATE KEY-----\nFAKEKEYMATERIAL0123456789\n-----END PRIVATE KEY-----"
     for value in (pem, json.dumps({"output": pem})):
         cleaned = redact.redact(value)

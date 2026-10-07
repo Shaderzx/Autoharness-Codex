@@ -22,6 +22,7 @@ _NESTED = re.compile(r"(?:tools\.)?([\w]+)\(\s*\{((?:" + _LITERAL + r"|[^{}'\"`]
 
 
 def _skill_name(event):
+    """Extract an explicitly named skill from supported hook payload fields."""
     nested = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
     for src in (event, nested):
         for key in ("skill_name", "skill", "name"):

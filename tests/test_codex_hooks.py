@@ -115,6 +115,7 @@ def test_disabled_curation_does_not_fire_after_tool_activity(roots):
 
 
 def test_detached_worker_imports_from_an_unrelated_directory(roots, tmp_path, monkeypatch):
+    """Verify detached workers retain package imports outside the source checkout."""
     monkeypatch.delenv("PYTHONPATH", raising=False)
     launches = []
     with monkeypatch.context() as patcher:

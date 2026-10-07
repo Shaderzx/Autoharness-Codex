@@ -153,6 +153,7 @@ def test_timeout_records_only_safe_code(tmp_path):
 
 
 def test_schema_normalizes_subfiles_and_rejects_duplicates():
+    """Normalize proposal subfiles while rejecting duplicate destination paths."""
     row = proposal(files=[{"path": "references/test.md", "content": "Details"}])
     assert spawn.parse_proposals(json.dumps({"intents": [row]}))[0]["files"] == {"references/test.md": "Details"}
     row["files"] *= 2
