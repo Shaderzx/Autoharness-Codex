@@ -141,6 +141,7 @@ def _members(lyr, root):
 
 
 def _on_session_start(event=None, *, roots=None):
+    """Import external skills, archive inactive managed skills and assemble session context."""
     roots = roots or {}
     imported = skill_import.import_skills(roots, timeout=5)
     archived = {}

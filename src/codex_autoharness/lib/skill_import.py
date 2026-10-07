@@ -15,6 +15,7 @@ from codex_autoharness.lib.locking import lock_root
 
 @contextmanager
 def _directory(path, *, dir_fd=None):
+    """Open a directory without following symlinks and close its descriptor afterward."""
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
     try:
         yield fd
@@ -23,11 +24,13 @@ def _directory(path, *, dir_fd=None):
 
 
 def _check_deadline(deadline):
+    """Abort copying once the optional shared startup deadline has elapsed."""
     if deadline is not None and time.monotonic() >= deadline:
         raise TimeoutError("startup import time budget exceeded; run import-skills to finish")
 
 
 def _copy_tree(source, target, *, top=True, deadline=None):
+    """Copy regular skill files by descriptor, preserving modes and excluding host metadata."""
     for name in sorted(os.listdir(source)):
         _check_deadline(deadline)
         if top and name in (sidecar.FILENAME, ledger.FILENAME):
@@ -56,6 +59,7 @@ def _copy_tree(source, target, *, top=True, deadline=None):
 
 
 def _native_rename():
+    """Return the native exclusive-rename function and flag, or report unsupported import."""
     native = ctypes.CDLL(None, use_errno=True)
     # macOS RENAME_EXCL=4; Linux RENAME_NOREPLACE=1.
     function, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
@@ -79,6 +83,7 @@ def _publish(source_fd, name, target_fd):
 
 
 def import_layer(lyr, root=None, *, deadline=None):
+    """Import missing Claude skills into one layer and report imported or skipped names."""
     root = layer._root(lyr, root)
     result = {"imported": [], "skipped": {}}
     try:
@@ -134,6 +139,7 @@ def import_layer(lyr, root=None, *, deadline=None):
 
 
 def import_skills(roots=None, *, timeout=None):
+    """Import each distinct global/project root within an optional shared copying budget."""
     roots = roots or {}
     deadline = time.monotonic() + timeout if timeout is not None else None
     return {lyr: import_layer(lyr, roots.get(lyr), deadline=deadline) for lyr in layer.unique_layers(roots)}

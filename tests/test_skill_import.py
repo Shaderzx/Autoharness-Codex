@@ -13,6 +13,7 @@ from codex_autoharness.lib import sidecar, skill_import
 
 
 def _skill(base, name="existing-claude"):
+    """Create a Claude skill with executable support, binary assets and ownership metadata."""
     path = base / ".claude" / "skills" / name
     path.mkdir(parents=True)
     (path / "SKILL.md").write_text(
@@ -31,10 +32,12 @@ def _skill(base, name="existing-claude"):
 
 
 def _roots(tmp_path):
+    """Select distinct temporary homes for the global and project skill layers."""
     return {"global": tmp_path / "home" / ".agents", "project": tmp_path / "repo" / ".agents"}
 
 
 def test_import_preserves_files_and_modes_without_ownership_or_overwrites(tmp_path):
+    """Imports preserve source bytes and executable bits without ownership or later overwrite."""
     roots = _roots(tmp_path)
     sources = {level: _skill(root.parent) for level, root in roots.items()}
     original = {level: {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()}
@@ -63,6 +66,7 @@ def test_import_preserves_files_and_modes_without_ownership_or_overwrites(tmp_pa
 
 @pytest.mark.parametrize("collision", ["directory", "file", "symlink", "dangling-link"])
 def test_existing_destination_is_never_replaced(tmp_path, collision):
+    """Existing files, directories and symlinks remain untouched during import."""
     source = _skill(tmp_path)
     root = tmp_path / ".agents"
     dest = root / "skills" / source.name
@@ -90,6 +94,7 @@ def test_existing_destination_is_never_replaced(tmp_path, collision):
 
 @pytest.mark.parametrize("unsafe", ["skill-link", "body-link", "file-link", "directory-link", "fifo", "name"])
 def test_unsafe_sources_are_skipped_and_partial_copy_removed(tmp_path, unsafe):
+    """Unsafe names, links and special files cannot publish a partial skill."""
     source = _skill(tmp_path, "bad..name" if unsafe == "name" else "unsafe")
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -117,6 +122,7 @@ def test_unsafe_sources_are_skipped_and_partial_copy_removed(tmp_path, unsafe):
 
 @pytest.mark.parametrize("redirect", [".claude", ".claude/skills", ".agents", ".agents/skills"])
 def test_symlinked_discovery_root_is_refused(tmp_path, redirect):
+    """Redirected discovery roots cannot write into an unrelated outside directory."""
     source = _skill(tmp_path)
     path = tmp_path / redirect
     if path.exists():
@@ -138,6 +144,7 @@ def test_symlinked_discovery_root_is_refused(tmp_path, redirect):
 
 
 def test_missing_claude_directory_does_not_create_state(tmp_path):
+    """An absent Claude library leaves the selected home untouched."""
     root = tmp_path / "absent" / ".agents"
     assert skill_import.import_layer("global", root) == {"imported": [], "skipped": {}}
     assert not root.parent.exists()
@@ -145,6 +152,7 @@ def test_missing_claude_directory_does_not_create_state(tmp_path):
 
 @pytest.mark.parametrize("scope", ["global", "project"])
 def test_install_automatically_imports_only_its_scope_and_uninstall_retains_it(tmp_path, scope):
+    """Installation imports its selected scope and uninstall retains those user-owned copies."""
     home, project = tmp_path / "home", tmp_path / "repo"
     _skill(home)
     _skill(project)
@@ -159,6 +167,7 @@ def test_install_automatically_imports_only_its_scope_and_uninstall_retains_it(t
 
 
 def test_session_start_imports_both_scopes_and_offers_new_paths_without_management(tmp_path):
+    """Startup exposes newly imported paths while excluding them from managed lifecycle recall."""
     roots = _roots(tmp_path)
     for root in roots.values():
         _skill(root.parent)
@@ -175,6 +184,7 @@ def test_session_start_imports_both_scopes_and_offers_new_paths_without_manageme
 
 
 def test_import_context_is_bounded_and_points_to_remaining_skills(tmp_path):
+    """Startup limits imported descriptors and points readers to the remaining skill files."""
     roots = _roots(tmp_path)
     for number in range(25):
         _skill(roots["project"].parent, f"skill-{number}")
@@ -185,6 +195,7 @@ def test_import_context_is_bounded_and_points_to_remaining_skills(tmp_path):
 
 
 def test_cli_import_reports_both_scopes_and_deduplicates_home_project(tmp_path, capsys):
+    """The CLI reports shared home/project storage as one imported global layer."""
     _skill(tmp_path)
     assert cli.main(["--home", str(tmp_path), "--project", str(tmp_path), "import-skills"]) == 0
     result = json.loads(capsys.readouterr().out)
@@ -193,6 +204,7 @@ def test_cli_import_reports_both_scopes_and_deduplicates_home_project(tmp_path, 
 
 
 def test_cli_reports_unsafe_import_as_unsuccessful(tmp_path, capsys):
+    """An unsafe source produces a nonzero CLI result with a specific skip reason."""
     source = _skill(tmp_path)
     (source / "linked").symlink_to(source / "SKILL.md")
     assert cli.main(["--home", str(tmp_path), "--project", str(tmp_path), "import-skills"]) == 1
@@ -202,6 +214,7 @@ def test_cli_reports_unsafe_import_as_unsuccessful(tmp_path, capsys):
 
 
 def test_interrupted_staging_is_outside_discovery_and_cleaned_before_retry(tmp_path):
+    """Retry removes interrupted staging before publishing a complete discoverable skill."""
     _skill(tmp_path)
     root = tmp_path / ".agents"
     stale = root / "codex-autoharness" / "imports" / ".claude-import-killed" / "existing-claude"
@@ -217,11 +230,13 @@ def test_interrupted_staging_is_outside_discovery_and_cleaned_before_retry(tmp_p
 
 
 def test_destination_created_during_copy_is_preserved_even_when_empty(tmp_path, monkeypatch):
+    """Atomic publication preserves a destination created after the initial collision check."""
     source = _skill(tmp_path)
     root = tmp_path / ".agents"
     original = skill_import._publish
 
     def race(src, name, dst):
+        """Create an empty user destination immediately before native publication."""
         (root / "skills" / name).mkdir()
         return original(src, name, dst)
 
@@ -233,11 +248,13 @@ def test_destination_created_during_copy_is_preserved_even_when_empty(tmp_path, 
 
 
 def test_copy_failure_can_be_retried_without_a_partial_destination(tmp_path, monkeypatch):
+    """A failed staged copy leaves no live destination and can succeed on retry."""
     _skill(tmp_path)
     root = tmp_path / ".agents"
     original = skill_import._copy_tree
 
     def fail(src, dst, **kwargs):
+        """Write a partial staged file and inject a copy failure."""
         fd = os.open("partial", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dst)
         os.close(fd)
         raise OSError("simulated copy failure")
@@ -250,6 +267,7 @@ def test_copy_failure_can_be_retried_without_a_partial_destination(tmp_path, mon
 
 
 def test_startup_timeout_keeps_retryable_sources_and_reports_manual_command(tmp_path, monkeypatch):
+    """An expired startup budget preserves sources and points users to the manual importer."""
     roots = _roots(tmp_path)
     _skill(roots["global"].parent)
     _skill(roots["project"].parent)
@@ -264,11 +282,15 @@ def test_startup_timeout_keeps_retryable_sources_and_reports_manual_command(tmp_
 
 
 def _native_error(monkeypatch, error):
+    """Replace native rename with a recording callable that returns the requested errno."""
     class Rename:
+        """Record publication attempts while simulating a native rename failure."""
         def __init__(self):
+            """Initialize the native-call record."""
             self.calls = []
 
         def __call__(self, *args):
+            """Record arguments and expose the configured errno to the importer."""
             self.calls.append(args)
             skill_import.ctypes.set_errno(error)
             return -1
@@ -281,6 +303,7 @@ def _native_error(monkeypatch, error):
 
 @pytest.mark.parametrize("native_errno", [errno.EINVAL, errno.ENOSYS, errno.ENOTSUP])
 def test_unsupported_native_rename_stops_layer_after_first_copy(tmp_path, monkeypatch, native_errno):
+    """Unsupported publication stops the layer after its first staged attempt."""
     for name in ("first", "second", "third"):
         _skill(tmp_path, name)
     root = tmp_path / ".agents"
@@ -298,6 +321,7 @@ def test_unsupported_native_rename_stops_layer_after_first_copy(tmp_path, monkey
 
 @pytest.mark.parametrize("native_errno", [errno.EEXIST, errno.EACCES])
 def test_other_native_errors_keep_errno_and_do_not_stop_layer(tmp_path, monkeypatch, native_errno):
+    """Collision and permission failures retain their errno and allow later skill attempts."""
     for name in ("first", "second"):
         _skill(tmp_path, name)
     rename = _native_error(monkeypatch, native_errno)
@@ -314,10 +338,12 @@ def test_other_native_errors_keep_errno_and_do_not_stop_layer(tmp_path, monkeypa
 
 
 def test_missing_native_symbol_is_reported_before_copying_any_skill(tmp_path, monkeypatch):
+    """A missing exclusive-rename symbol is detected before copying or creating state."""
     _skill(tmp_path)
     monkeypatch.setattr(skill_import.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace())
 
     def unexpected_copy(*args, **kwargs):
+        """Fail the regression if an unavailable native API still permits copying."""
         pytest.fail("unsupported native API should be detected before copying")
 
     monkeypatch.setattr(skill_import, "_copy_tree", unexpected_copy)

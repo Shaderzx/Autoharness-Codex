@@ -81,6 +81,7 @@ def _skill_text(command):
 
 
 def install(*, project=None, home=None):
+    """Install owned hooks and the learning helper, then import Claude skills for that scope."""
     hooks_path, install_dir, skill_dir = _paths(project, home)
     manifest_path = install_dir / "install.json"
     previous = _read_json(manifest_path, {})

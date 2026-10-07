@@ -12,6 +12,7 @@ from codex_autoharness.stage_skill import server
 
 
 def parser():
+    """Define maintenance commands and global options for selecting isolated roots."""
     p = argparse.ArgumentParser(prog="codex-autoharness", description="Learn, curate and recall native Codex skills from real sessions.")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--project", type=Path, help="Project directory (defaults to the current project); install uses global scope unless supplied")
@@ -80,6 +81,7 @@ def _archive_restore(args, roots):
 
 
 def main(argv=None):
+    """Dispatch a CLI command and return its exit status after reporting structured results."""
     args = parser().parse_args(argv)
     roots = integration.roots(project=args.project, home=args.home)
     if hasattr(args, "level"):
