@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from codex_autoharness import config
-from codex_autoharness.hook import spawn
+from codex_autoharness.hook import on_session_start, spawn
 from codex_autoharness.lib import (
     counters,
     intent_queue,
@@ -169,6 +169,9 @@ sys.exit(1 if sys.argv[2] == "failure" else 0)
             spawn.run("window", "timeout-run", roots=roots, spawn_fn=timeout)
         account = (layer.state_dir("project", roots["project"]) / "runs/timeout-run.json").read_text()
         assert "secret" not in account and json.loads(account).get("error") == error
+        if error:
+            assert on_session_start.last_run_summary(roots) == f"autoharness last run: failed ({error})"
+            assert on_session_start.last_run_summary(roots) is None
         assert homes and not homes[0].exists()
         assert signal.getsignal(signal.SIGTERM) == original_handler
         for pid in map(int, pids.read_text().split()):

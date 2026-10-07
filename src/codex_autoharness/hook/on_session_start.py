@@ -114,6 +114,8 @@ def last_run_summary(roots):
             consumed.unlink()
         except OSError:
             pass
+    if last.get("status") == "error":
+        return f"autoharness last run: failed ({_sanitize(last.get('error') or 'runner', 80)})"
     line = (f"autoharness last run: landed {last.get('landed', 0)}, "
             f"rejected {last.get('rejected', 0)}")
     if last.get("families"):
