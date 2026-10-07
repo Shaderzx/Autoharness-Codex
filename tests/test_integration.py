@@ -100,6 +100,9 @@ def test_status_counts_home_project_as_one_global_layer(tmp_path):
     assert list(result["layers"]) == ["global"]
     assert result["layers"]["global"]["managed_skills"] == ["shared"]
     assert result["layer_aliases"] == {"project": "global"}
+    assert list(result["metrics"]) == ["global"]
+    assert result["metrics"]["global"]["live_symbols"] == 1
+    assert result["metrics"]["global"]["use_total"] == 0
 
 
 def test_uninstall_preserves_user_edits_and_hooks_added_after_install(tmp_path):
