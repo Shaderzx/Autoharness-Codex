@@ -29,7 +29,7 @@ def parser():
         commands.add_parser(name, help=help_text)
     learn = commands.add_parser("learn", help="Distill a supplied Codex JSONL transcript now")
     learn.add_argument("--transcript", type=Path, required=True, help="Exact session transcript to distill")
-    learn.add_argument("--session-id", default="manual")
+    learn.add_argument("--session-id", help="Stable session identity; required for optional learner-history reuse")
     stage = commands.add_parser("stage", help="Validate and apply one JSON proposal through the sole writer")
     stage.add_argument("--file", type=Path, help="Proposal JSON file; default stdin")
     stage.add_argument("--queue-only", action="store_true", help="Queue for the next Stop hook instead of applying now")

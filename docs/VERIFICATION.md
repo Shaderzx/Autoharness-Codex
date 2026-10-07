@@ -1,5 +1,29 @@
 # Build verification
 
+## Optional isolated learner sessions
+
+Verified on 2026-10-07 with Codex CLI 0.160.1. `resume` and `fork` are opt-in;
+the default remains a fresh bounded bundle. The executable local-provider test
+in `tests/test_codex_request_catalog.py` runs three generations for each mode,
+deletes every prior temporary home, and transfers only a sanitized learner
+rollout without SQLite state. Every request retains prior learner messages,
+uses the current model, provider and reasoning selection, and exposes no tools.
+
+Native source checks informed the cache format: `codex exec fork` can create
+reference-backed paginated history, and persisted metadata can restore tools or
+capability roots. The cache therefore uses Codex's self-contained legacy history
+format, retains only user/assistant text, drops stored instructions and settings,
+and explicitly preserves disabled multi-agent capability. The relevant source is
+[the 0.160.1 protocol](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/protocol/src/protocol.rs)
+and [thread processor](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/app-server/src/request_processors/thread_processor.rs).
+
+Regression checks cover private permissions, routing/session separation,
+redaction, history-size and retention caps, malformed caches, no-output fallback,
+and rejection of evidence available only in prior history. The full suite passed
+**584 tests**; scoped Ruff and `git diff --check` passed. These checks use synthetic
+messages and a loopback provider. They do not measure provider-side caching,
+learning quality, or compatibility with other Codex versions.
+
 ## 0.1.1 — session model inheritance
 
 Verified on 2026-10-07 with Codex CLI 0.160.1. Background learners and curators

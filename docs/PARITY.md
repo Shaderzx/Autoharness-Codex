@@ -34,7 +34,7 @@ Codex AutoHarness adapts the upstream storage and maintenance pipeline under its
 | Model authority | Claude proposer stages intents; promoter writes | Isolated read-only `codex exec` returns JSON; promoter writes | The Codex proposer has no configured MCP servers and no skill-library write capability. |
 | Session model | Host session supplies model context | Each background learner and curator inherits its triggering session's model, provider identity, and reasoning effort | Job arguments freeze the selection; concurrent sessions and later model switches cannot replace it. No configured concurrent-session limit. |
 | Direct staging | Plugin-scoped `stage_skill` MCP | `stage` CLI and optional stdio `mcp` server | The ordinary Codex proposer uses structured output rather than MCP tool calls. |
-| Fork carrier | Experimental resume/fork option; bundle default | Bundle only | No resume/fork or warm-prefix-cache optimization. This does not omit the upstream default learning path. |
+| Fork carrier | Experimental resume/fork option; bundle default | Optional isolated learner `resume`/`fork`; bundle default | Reuses only bounded redacted learner history, never the user's session. Requires the corresponding Codex `exec` subcommand; no provider-side cache benefit is guaranteed. |
 | Distribution and updates | Claude plugin marketplace | Local Codex plugin marketplace and Python package | No hosted marketplace listing, automatic updater, or remote publication is implied by this build. |
 | Performance evidence | Upstream cites broader harness research | No comparative benchmark claimed | Upstream research percentages do not measure this port. |
 
@@ -49,6 +49,8 @@ The denominator is the number of requests received after creation. Graduation re
 ## Codex adaptation choices
 
 The default learning path uses a fresh Codex process with a bounded input bundle. Model output must match a proposal schema before it reaches the deterministic staging layer. The child does not inherit the user's project tools or MCP servers, and it cannot directly edit the library. This makes the separation between proposing and applying changes explicit in Codex.
+
+`CODEX_AUTOHARNESS_REFLECTOR_CARRIER=resume` or `fork` enables reuse of a dedicated isolated learner's history through the native `codex exec` subcommands (verified with Codex 0.160.1). Reuse is scoped to the project, triggering session, effective model/provider/reasoning configuration, and source Codex home. Each call builds the current redacted bundle and isolated configuration again; evidence and admission checks remain unchanged. Private sanitized history is capped at 2 MB with five cached sessions per project. Invalid or unavailable histories start fresh; a carrier failure before proposal output receives one fresh retry. Curators remain fresh, and neither mode imports the active user's rollout or project tools.
 
 The validator rejects unsafe paths, unmanaged targets, invalid structures, missing support files, unsupported proposal shapes, and selected unsafe text. The deterministic checks preserve an admission boundary; they cannot validate every natural-language instruction or prove a lesson useful. Transcript text remains untrusted evidence even when it resembles instructions to the reflector.
 

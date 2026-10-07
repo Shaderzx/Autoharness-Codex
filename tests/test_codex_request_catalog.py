@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from codex_autoharness.hook import session_carrier
 from codex_autoharness.hook.spawn import build_command
 
 
@@ -75,6 +76,84 @@ def test_real_codex_proposer_request_has_no_tools(tmp_path):
         except subprocess.TimeoutExpired:
             process.terminate()
             process.wait(timeout=3)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+@pytest.mark.skipif(not shutil.which("codex"), reason="Codex CLI is not installed")
+@pytest.mark.parametrize("carrier", ["resume", "fork"])
+def test_real_codex_reuses_isolated_learner_history(tmp_path, carrier):
+    captured = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"data":[]}')
+
+        def do_POST(self):
+            captured.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            events = [
+                {"type": "response.created", "response": {"id": "local-response"}},
+                {"type": "response.output_item.done", "item": {
+                    "type": "message", "role": "assistant", "id": "local-message",
+                    "content": [{"type": "output_text", "text": '{"intents":[]}'}]}},
+                {"type": "response.completed", "response": {"id": "local-response",
+                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}}},
+            ]
+            data = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(data.encode())
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    cache_path = tmp_path / "learner.json"
+    previous_id = None
+    markers = ["isolated-learner-seed", "isolated-learner-second", "isolated-learner-third"]
+    try:
+        for index, marker in enumerate(markers):
+            home, work = tmp_path / f"home-{index}", tmp_path / f"work-{index}"
+            home.mkdir()
+            work.mkdir()
+            model, provider, effort = f"probe-model-{index}", f"capture_{index}", ("high", "low", "high")[index]
+            (home / "config.toml").write_text(
+                f'model = "{model}"\nmodel_provider = "{provider}"\napproval_policy = "never"\n'
+                f'sandbox_mode = "read-only"\n[model_providers.{provider}]\nname = "Local verification"\n'
+                f'base_url = "http://127.0.0.1:{server.server_port}/v1"\n'
+                'wire_api = "responses"\nrequest_max_retries = 0\nstream_max_retries = 0\n'
+            )
+            assert not list(home.glob("*.sqlite*")), "The transfer must work without copied SQLite state"
+            learner_id = session_carrier.restore(cache_path, home)
+            assert learner_id == previous_id
+            output = tmp_path / f"output-{index}.json"
+            command = build_command(output_path=output, cwd=work, model=model,
+                                    reasoning_effort=effort, carrier=carrier, learner_id=learner_id)
+            result = subprocess.run(command, input=marker, text=True, capture_output=True,
+                                    env={"PATH": os.environ["PATH"], "CODEX_HOME": str(home)}, timeout=30)
+            assert result.returncode == 0, result.stderr
+            assert json.loads(output.read_text()) == {"intents": []}
+            assert len(captured) == index + 1
+            request = captured[-1]
+            assert request.get("tools", []) == []
+            assert request["model"] == model
+            assert request.get("reasoning", {}).get("effort") == effort
+            for seen_marker in markers[:index + 1]:
+                assert seen_marker in json.dumps(request["input"])
+            assert str(work) in json.dumps(request["input"])
+            session_carrier.save(cache_path, home, tmp_path)
+            assert cache_path.is_file()
+            previous_id = json.loads(cache_path.read_text().splitlines()[0])["payload"]["id"]
+            shutil.rmtree(home)
+            shutil.rmtree(work)
+    finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
