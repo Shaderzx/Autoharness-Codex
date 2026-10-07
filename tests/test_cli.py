@@ -1,10 +1,13 @@
 """User-facing commands use the supplied roots and reject invalid proposals."""
 
 import json
+import tarfile
 
 import pytest
 
 from codex_autoharness import cli
+from codex_autoharness.hook import spawn
+from codex_autoharness.lib import sidecar, skill_store
 
 
 @pytest.fixture
@@ -113,3 +116,53 @@ def test_stage_reports_malformed_json_without_creating_skills(tmp_path, cli_root
     assert json.loads(capsys.readouterr().out)["ok"] is False
     assert not list(home.rglob("SKILL.md"))
     assert not list(project.rglob("SKILL.md"))
+
+
+@pytest.mark.parametrize("level", ["project", "global"])
+def test_restore_snapshot_preserves_files_and_refuses_overwrite(cli_roots, capsys, level):
+    argv, home, project, _, _ = cli_roots
+    roots = {"project": project / ".agents", "global": home / ".agents"}
+    root = roots[level]
+    body = "---\nname: example\ndescription: Use when testing.\n---\nOriginal lesson.\n"
+    skill_store.write_body(level, "example", body, root)
+    sidecar.create(level, "example", anchor=3, root=root)
+    directory = root / "skills" / "example"
+    script = directory / "scripts" / "check.sh"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o755)
+    (directory / "ledger.jsonl").write_text('{"evidence":"original"}\n')
+    original = {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+    spawn._snapshot_skills("before", roots)
+    snapshot = roots["project"] / "codex-autoharness" / "snapshots" / f"before-{level}.tar.gz"
+    command = [*argv, "restore", "example", "--level", level, "--snapshot", str(snapshot)]
+    skill_store.write_body(level, "example", "Newer lesson", root)
+    assert cli.main(command) == 1
+    assert "archive it first" in capsys.readouterr().out
+    assert skill_store.read_body(level, "example", root) == "Newer lesson"
+    archived = skill_store.archive(level, "example", root)
+    assert cli.main(command) == 0
+    assert {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()} == original
+    assert script.stat().st_mode & 0o777 == 0o755
+    assert (archived / "SKILL.md").read_text() == "Newer lesson"
+    assert snapshot.is_file()
+
+
+@pytest.mark.parametrize("member_name,member_type", [
+    ("skills/example/../../escape", tarfile.REGTYPE),
+    ("skills/example/link", tarfile.SYMTYPE),
+    ("skills/example/link", tarfile.LNKTYPE),
+])
+def test_restore_snapshot_rejects_unsafe_members(cli_roots, tmp_path, capsys, member_name, member_type):
+    argv, _, project, _, _ = cli_roots
+    snapshot = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(snapshot, "w:gz") as archive:
+        member = tarfile.TarInfo(member_name)
+        member.type = member_type
+        member.linkname = str(tmp_path / "escape") if member_type != tarfile.REGTYPE else ""
+        archive.addfile(member)
+    assert cli.main([*argv, "restore", "example", "--snapshot", str(snapshot)]) == 1
+    assert "unsafe snapshot member" in capsys.readouterr().out
+    assert not (project / ".agents" / "skills" / "example").exists()
+    assert not (tmp_path / "escape").exists()
+    assert not list((project / ".agents" / "skills").glob(".snapshot-*"))

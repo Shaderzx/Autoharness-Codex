@@ -37,6 +37,8 @@ def parser():
         cmd = commands.add_parser(name, help=f"{name.title()} one managed skill; preserve user-authored skills")
         cmd.add_argument("name")
         cmd.add_argument("--level", choices=layer.LAYERS, default=layer.PROJECT)
+        if name == "restore":
+            cmd.add_argument("--snapshot", type=Path, help="Recover this skill from a pre-curation .tar.gz snapshot")
     history = commands.add_parser("history", help="Show run accounts or one managed skill's ledger")
     history.add_argument("name", nargs="?")
     history.add_argument("--level", choices=layer.LAYERS, default=layer.PROJECT)
@@ -69,6 +71,8 @@ def _archive_restore(args, roots):
         if not sidecar.is_agent_created(args.level, args.name, root):
             raise ValueError("Only managed skills can be archived")
         dest = skill_store.archive(args.level, args.name, root)
+    elif args.snapshot:
+        dest = skill_store.restore_snapshot(args.level, args.name, args.snapshot, root)
     else:
         layer._check_name(args.name)
         archived = layer.archive_dir(args.level, root) / args.name

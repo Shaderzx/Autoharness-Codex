@@ -9,7 +9,11 @@ LED/sidecar); landing a delete and MNG (Phase 6) eviction share this one path.
 """
 import json
 import os
+import shutil
+import tarfile
+import tempfile
 import time
+from pathlib import Path, PurePosixPath
 
 from codex_autoharness.lib import atomic, layer, sidecar
 from codex_autoharness.lib.locking import lock_root
@@ -92,6 +96,55 @@ def _archive(lyr, name, root=None):
 def restore(lyr, name, root=None):
     with lock_root(layer._root(lyr, root)):
         return _restore(lyr, name, root)
+
+
+def restore_snapshot(lyr, name, snapshot, root=None):
+    """Recover one skill without overwriting live data or extracting archive links."""
+    from codex_autoharness.lib import validate
+
+    with lock_root(layer._root(lyr, root)):
+        dest = layer.symbol_dir(lyr, name, root)
+        if dest.exists():
+            raise ValueError("restore target already exists; archive it first")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=dest.parent) as temporary:
+            staged = Path(temporary) / name
+            staged.mkdir()
+            seen, size = set(), 0
+            try:
+                with tarfile.open(snapshot, "r:gz") as archive:
+                    for member in archive:
+                        parts = PurePosixPath(member.name).parts
+                        if parts[:2] != ("skills", name):
+                            continue
+                        if ".." in parts or "\\" in member.name or not (member.isdir() or member.isfile()):
+                            raise ValueError("unsafe snapshot member")
+                        relative = parts[2:]
+                        if relative in seen or (not relative and not member.isdir()):
+                            raise ValueError("duplicate or invalid snapshot member")
+                        seen.add(relative)
+                        size += member.size
+                        if size > 10_000_000 or len(seen) > 1000:
+                            raise ValueError("snapshot skill exceeds recovery limits")
+                        target = staged.joinpath(*relative)
+                        if member.isdir():
+                            target.mkdir(parents=True, exist_ok=True)
+                        else:
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            with archive.extractfile(member) as source, target.open("xb") as output:
+                                shutil.copyfileobj(source, output)
+                            target.chmod(member.mode & 0o777)
+            except tarfile.TarError as exc:
+                raise ValueError("invalid snapshot archive") from exc
+            if not (staged / SKILL_FILE).is_file() or not (staged / sidecar.FILENAME).is_file():
+                raise ValueError("snapshot does not contain the requested managed skill")
+            metadata = json.loads((staged / sidecar.FILENAME).read_text())
+            if not isinstance(metadata, dict) or metadata.get("created_by") != sidecar.OWNER:
+                raise ValueError("cannot restore an unmanaged snapshot skill")
+            if (validate._frontmatter((staged / SKILL_FILE).read_text()) or {}).get("name") != name:
+                raise ValueError("snapshot skill name does not match")
+            os.replace(staged, dest)
+        return dest
 
 
 def _restore(lyr, name, root=None):
