@@ -94,6 +94,7 @@ The transcript command runs synchronously and inherits the last model context re
 | `history NAME --level project` | Shows a managed skill's provenance ledger. |
 | `archive NAME --level project` | Moves a managed skill out of active recall. |
 | `restore NAME --level project` | Restores an archived managed skill, unless its live name is occupied. |
+| `restore NAME --snapshot FILE --level project` | Recovers one managed skill from a pre-curation snapshot, unless its live name is occupied. |
 | `spec` | Prints the authoring and validation contract. |
 | `stage --file FILE` | Validates and applies one JSON proposal immediately. |
 | `stage --file FILE --queue-only` | Queues the proposal for the next Stop hook. |
@@ -132,7 +133,13 @@ Each managed skill carries ownership metadata and an append-only provenance ledg
 
 By default the project layer follows the session's working directory. Linked Git worktrees resolve to the main worktree so their learned skills survive worktree removal. Start Codex at the project root, or pass an explicit `--project`, when you want all work in one project library.
 
-The state directory includes request and tool-call counters, transcript offsets, `intents/`, `runs/`, `last_run.json`, and curator `snapshots/`. Snapshots include managed skills only; both layers' snapshots are stored under the project's state directory. Curation stops if a required snapshot cannot be created. Review history before changing a lesson. `archive` and `restore` are the ordinary recovery commands; snapshots are a separate recovery source for a curator run and require selective manual recovery. A snapshot is not a reason to overwrite unrelated current skills.
+The state directory includes request and tool-call counters, transcript offsets, `intents/`, `runs/`, `last_run.json`, and curator `snapshots/`. Snapshots include managed skills only; both layers' snapshots are stored under the project's state directory. Curation stops if a required snapshot cannot be created. Review history before changing a lesson. Use `restore NAME --snapshot FILE --level project` to recover one skill, including its metadata, ledger, and support files. For example:
+
+```sh
+codex-autoharness restore my-skill --snapshot .agents/codex-autoharness/snapshots/RUN-project.tar.gz
+```
+
+Choose the snapshot file for the intended layer; use `--level global` for global recovery. If the live name is occupied, first run `archive NAME --level project` to preserve the current managed version. Recovery refuses all occupied names, including unmanaged skills, and leaves unrelated skills and the snapshot unchanged. It rejects links and unsafe paths and limits each recovered skill to 10 MB and 1,000 archive entries. Ordinary `restore` without `--snapshot` still revives an archived skill.
 
 ## Configuration
 
