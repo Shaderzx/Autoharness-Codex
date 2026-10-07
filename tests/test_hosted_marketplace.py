@@ -166,11 +166,20 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
         while not refreshed.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert refreshed.exists(), "Pinned marketplace startup refresh did not complete"
-        assert json.loads(refreshed.read_text())["revision"] == first_revision
+        active = next(plugin for plugin in codex("plugin", "list", "--marketplace", MARKETPLACE,
+                                                  fixture_home=pinned)["installed"]
+                      if plugin["pluginId"] == integration.PLUGIN_ID)
+        pinned_cache = pinned_cache.parent / active["version"]
+        assert json.loads((pinned_cache / ".codex-marketplace-install.json").read_text())["revision"] == first_revision
         assert (pinned_cache / "skills/probe/SKILL.md").read_text() == files["skills/probe/SKILL.md"]
         assert tomllib.loads((pinned / "config.toml").read_text())["marketplaces"][MARKETPLACE]["ref"] == first_revision
     codex("plugin", "marketplace", "upgrade", MARKETPLACE, fixture_home=pinned)
-    assert "first" in (pinned_cache / "skills/probe/SKILL.md").read_text()
+    active = next(plugin for plugin in codex("plugin", "list", "--marketplace", MARKETPLACE,
+                                              fixture_home=pinned)["installed"]
+                  if plugin["pluginId"] == integration.PLUGIN_ID)
+    pinned_cache = pinned_cache.parent / active["version"]
+    assert json.loads((pinned_cache / ".codex-marketplace-install.json").read_text())["revision"] == first_revision
+    assert (pinned_cache / "skills/probe/SKILL.md").read_text() == files["skills/probe/SKILL.md"]
     assert tomllib.loads((pinned / "config.toml").read_text())["marketplaces"][MARKETPLACE]["ref"] == first_revision
     assert direct_hooks.read_text() == '{"hooks":{}}\n'
     assert user_skill.read_text().endswith("Keep this.\n")

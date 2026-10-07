@@ -10,6 +10,7 @@ from codex_autoharness.lib import layer
 
 
 def _int_env(name, default, minimum=None):
+    """Read an integer override, enforcing its floor or using the default."""
     try:
         floor = (0 if default == 0 else 1) if minimum is None else minimum
         return max(floor, int(os.environ[name]))
@@ -77,8 +78,8 @@ FORMAT_SPEC = _LIB / "format_spec.md"            # #416 single source for author
 
 CHILD_SESSION_ENV = "CODEX_AUTOHARNESS_CHILD_SESSION"
 
-# Fresh isolated Codex sessions receive redacted bundles; no parent session is resumed.
-REFLECTOR_CARRIER = "bundle"
+# Session reuse is opt-in and only ever reads our isolated learner rollouts.
+REFLECTOR_CARRIER = os.environ.get("CODEX_AUTOHARNESS_REFLECTOR_CARRIER", "bundle").strip().lower()
 
 REFLECTOR_AGENT = "codex-autoharness-reflector"
 CURATOR_AGENT = "codex-autoharness-curator"

@@ -29,6 +29,35 @@ Automatic updates are provided by Codex's existing
 [plugin startup task](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/core-plugins/src/manager.rs#L2812).
 There is no custom updater, release scheduler, or public plugin directory listing.
 
+## Optional isolated learner sessions
+
+Verified on 2026-10-07 with Codex CLI 0.160.1. `resume` and `fork` are opt-in;
+the default remains a fresh bounded bundle. The executable local-provider test
+in `tests/test_codex_request_catalog.py` runs three generations for each mode,
+deletes every prior temporary home, and transfers only a sanitized learner
+rollout without SQLite state. Every request retains prior learner messages,
+uses the current model, provider and reasoning selection, and exposes no tools.
+
+Native source checks informed the cache format: `codex exec fork` can create
+reference-backed paginated history, and persisted metadata can restore tools or
+capability roots. The cache therefore uses Codex's self-contained legacy history
+format, retains only user/assistant text, drops stored instructions and settings,
+and explicitly preserves disabled multi-agent capability. The relevant source is
+[the 0.160.1 protocol](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/protocol/src/protocol.rs)
+and [thread processor](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/app-server/src/request_processors/thread_processor.rs).
+
+Regression checks cover private permissions, routing/session separation,
+redaction, history-size and retention caps, malformed caches, no-output fallback,
+and rejection of evidence available only in prior history. The full suite passed
+**584 tests**; scoped Ruff and `git diff --check` passed. These checks use synthetic
+messages and a loopback provider. They do not measure provider-side caching,
+learning quality, or compatibility with other Codex versions.
+
+After merging the snapshot-recovery, Claude-import and test-consolidation changes
+from `main`, the retained suite passed **290 tests**, Ruff passed for `src`,
+`tests` and `tools`, and `git diff --check` passed. Removed redundant tests were
+kept removed; the learner-session tests extend the retained baseline.
+
 ## Test suite cleanup
 
 Verified on 2026-10-07: **243 passed**, no failures or skips; Ruff passed.
