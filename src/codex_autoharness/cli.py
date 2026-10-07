@@ -7,7 +7,7 @@ from pathlib import Path
 
 from codex_autoharness import __version__, integration
 from codex_autoharness.hook import on_session_start, promoter
-from codex_autoharness.lib import layer, ledger, sidecar, skill_store
+from codex_autoharness.lib import layer, ledger, sidecar, skill_import, skill_store
 from codex_autoharness.stage_skill import server
 
 
@@ -18,6 +18,7 @@ def parser():
     p.add_argument("--home", type=Path, help="Explicit home directory for an isolated installation and global layer")
     commands = p.add_subparsers(dest="command", required=True)
     for name, help_text in (("install", "Install six native hooks and $codex-learn; trust them in /hooks"),
+                            ("import-skills", "Copy existing global and project Claude skills without overwriting Codex skills"),
                             ("uninstall", "Remove installer-owned hooks and helper; retain learned skills"),
                             ("status", "Show managed skills, roots and pending proposals"),
                             ("doctor", "Check Python, Codex and installation; explain hook trust"),
@@ -101,6 +102,10 @@ def main(argv=None):
             return dispatch.main()
         if args.command in ("install", "uninstall", "status", "doctor"):
             return _emit(getattr(integration, args.command)(project=args.project, home=args.home))
+        if args.command == "import-skills":
+            imported = skill_import.import_skills(roots)
+            ok = all(reason == "destination exists" for result in imported.values() for reason in result["skipped"].values())
+            return _emit({"ok": ok, "layers": imported})
         if args.command == "index":
             print(on_session_start.recall_index(roots, cwd=str(args.project or Path.cwd())) or "No managed skills yet.")
             return 0

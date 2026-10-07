@@ -9,7 +9,7 @@ Codex AutoHarness adapts the upstream storage and maintenance pipeline under its
 | Capability | Tigerless Labs AutoHarness | Codex AutoHarness | Practical difference |
 |---|---|---|---|
 | Host integration | Claude Code plugin and hooks | Native Codex plugin and lifecycle hooks, with a Python CLI | Local plugin marketplace installation uses its own hooks source. Direct hook installation is also available. Both require `/hooks` trust. |
-| Native skill files | `.claude/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md` | Project and global layers use Codex discovery paths. Existing Claude skills are not imported automatically. |
+| Native skill files | `.claude/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md` | Missing global/project Claude skills are copied automatically at `SessionStart` and for the installed scope during direct installation; `import-skills` also runs on demand. Originals and existing Codex destinations are preserved. |
 | Automatic learning | Reflects after a tool-call threshold | Reflects after a tool-call threshold | Both default to 50 main-session tool calls and start learning after the turn ends. |
 | Tail flush | Session-end capture | `SessionEnd` flush | Depends on the host actually emitting the event; an abruptly killed host may not flush its tail. |
 | Learn on demand | `/learn` plugin skill | `$codex-learn`; `learn --transcript FILE` | The helper distills the current conversation; the CLI reads the exact transcript supplied by the caller. |
@@ -53,6 +53,8 @@ The default learning path uses a fresh Codex process with a bounded input bundle
 The validator rejects unsafe paths, unmanaged targets, invalid structures, missing support files, unsupported proposal shapes, and selected unsafe text. The deterministic checks preserve an admission boundary; they cannot validate every natural-language instruction or prove a lesson useful. Transcript text remains untrusted evidence even when it resembles instructions to the reflector.
 
 Plugin installation keeps hooks in a separate plugin source. The alternative direct installer registers commands alongside existing integrations and records the exact commands and file digests it owns. Direct uninstall removes those entries and unchanged helper files while retaining learned skills, archives, and evidence. Neither path resets another tool's hooks or automatically changes trust decisions. Editing a shared hooks source can invalidate its prior trust, which is why plugin installation is the preferred path.
+
+Claude skill import copies regular files and support directories with executable permissions. It refuses symlinks, special files and unsafe skill names, skips occupied destinations, and excludes ownership/accounting metadata. Imported skills remain outside automatic lifecycle management. Newly imported names and file paths are offered through a bounded `SessionStart` context; restarting Codex refreshes native discovery if its catalog was loaded before the hook. Files are copied without converting Claude-specific instructions, and repeated imports never overwrite the Codex copy.
 
 ## Remaining limits
 
