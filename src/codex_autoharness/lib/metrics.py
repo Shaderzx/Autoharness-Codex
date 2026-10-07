@@ -78,8 +78,11 @@ def _funnel(lyr, root):
                 proposed += 1
                 if v.get("ok"):
                     landed += 1
-                for family in v.get("findings", []):
-                    families[family] = families.get(family, 0) + 1
+                findings = v.get("findings", [])
+                if isinstance(findings, list):
+                    for family in findings:
+                        if isinstance(family, str):
+                            families[family] = families.get(family, 0) + 1
     return {"proposed": proposed, "landed": landed, "rejected": proposed - landed}, families
 
 
