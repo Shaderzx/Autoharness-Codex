@@ -9,7 +9,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from codex_autoharness.lib import atomic, layer, sidecar, skill_import
+from codex_autoharness.lib import atomic, layer, metrics, sidecar, skill_import
 
 EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd")
 SKILL_NAME = "codex-learn"
@@ -198,7 +198,8 @@ def status(*, project=None, home=None):
     aliases = {name: layer.canonical_layer(name, resolved) for name in layer.LAYERS
                if layer.canonical_layer(name, resolved) != name}
     return {"ok": True, "installed": native or bool(versions), "native_hooks_installed": native,
-            "plugin": plugin, "hooks": str(hooks_path), "layers": layers, "layer_aliases": aliases}
+            "plugin": plugin, "hooks": str(hooks_path), "layers": layers, "layer_aliases": aliases,
+            "metrics": metrics.collect(resolved)}
 
 
 def doctor(*, project=None, home=None):

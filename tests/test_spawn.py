@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from codex_autoharness import config
-from codex_autoharness.hook import spawn
+from codex_autoharness.hook import on_session_start, spawn
 from codex_autoharness.lib import (
     counters,
     intent_queue,
@@ -148,6 +148,8 @@ def test_timeout_records_only_safe_code(tmp_path):
         spawn.run("window", "timeout-run", roots=roots, spawn_fn=timeout)
     account = (layer.state_dir("project", roots["project"]) / "runs/timeout-run.json").read_text()
     assert "secret" not in account and '"error": "timeout"' in account
+    assert on_session_start.last_run_summary(roots) == "autoharness last run: failed (timeout)"
+    assert on_session_start.last_run_summary(roots) is None
 
 
 def test_schema_normalizes_subfiles_and_rejects_duplicates():
