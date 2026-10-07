@@ -55,19 +55,26 @@ def _copy_tree(source, target, *, top=True, deadline=None):
             raise ValueError("skill contains a symlink or non-regular file")
 
 
-def _publish(source_fd, name, target_fd):
-    """Atomically publish a directory without replacing even an empty user directory."""
+def _native_rename():
     native = ctypes.CDLL(None, use_errno=True)
     # macOS RENAME_EXCL=4; Linux RENAME_NOREPLACE=1.
     function, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
     rename = getattr(native, function, None)
     if rename is None:
-        raise OSError(errno.ENOTSUP, "atomic no-replace import is unavailable")
+        raise OSError(errno.ENOTSUP, "atomic no-replace import is unsupported on this filesystem")
     rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
     rename.restype = ctypes.c_int
+    return rename, flag
+
+
+def _publish(source_fd, name, target_fd):
+    """Atomically publish a directory without replacing even an empty user directory."""
+    rename, flag = _native_rename()
     encoded = os.fsencode(name)
     if rename(source_fd, encoded, target_fd, encoded, flag) != 0:
         error = ctypes.get_errno()
+        if error in (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP):
+            raise OSError(errno.ENOTSUP, "atomic no-replace import is unsupported on this filesystem")
         raise OSError(error, os.strerror(error))
 
 
@@ -80,6 +87,7 @@ def import_layer(lyr, root=None, *, deadline=None):
             return result
         if not source.is_dir():
             raise ValueError("Claude skills path is not a directory")
+        _native_rename()  # A missing libc symbol cannot publish any skill; detect it before copying.
         with _directory(source.parent) as parent, _directory(source.name, dir_fd=parent) as src:
             with lock_root(root):
                 target = layer.skills_dir(lyr, root)
@@ -117,6 +125,9 @@ def import_layer(lyr, root=None, *, deadline=None):
                             result["imported"].append(name)
                         except (OSError, ValueError) as exc:
                             result["skipped"][name] = "destination exists" if isinstance(exc, FileExistsError) else str(exc)
+                            if isinstance(exc, OSError) and exc.errno == errno.ENOTSUP:
+                                result["skipped"]["."] = f"remaining imports stopped: {exc}"
+                                break
     except (OSError, ValueError) as exc:
         result["skipped"]["."] = str(exc)
     return result

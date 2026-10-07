@@ -1,7 +1,9 @@
 """Claude imports preserve user ownership, support files and discovery boundaries."""
+import errno
 import json
 import os
 import stat
+from types import SimpleNamespace
 
 import pytest
 
@@ -259,3 +261,68 @@ def test_startup_timeout_keeps_retryable_sources_and_reports_manual_command(tmp_
         assert result["skill_import"][level]["imported"] == []
         assert "time budget" in result["skill_import"][level]["skipped"]["existing-claude"]
         assert not (root / "skills" / "existing-claude").exists()
+
+
+def _native_error(monkeypatch, error):
+    class Rename:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, *args):
+            self.calls.append(args)
+            skill_import.ctypes.set_errno(error)
+            return -1
+
+    rename = Rename()
+    native = SimpleNamespace(renameatx_np=rename, renameat2=rename)
+    monkeypatch.setattr(skill_import.ctypes, "CDLL", lambda *args, **kwargs: native)
+    return rename
+
+
+@pytest.mark.parametrize("native_errno", [errno.EINVAL, errno.ENOSYS, errno.ENOTSUP])
+def test_unsupported_native_rename_stops_layer_after_first_copy(tmp_path, monkeypatch, native_errno):
+    for name in ("first", "second", "third"):
+        _skill(tmp_path, name)
+    root = tmp_path / ".agents"
+    rename = _native_error(monkeypatch, native_errno)
+
+    result = skill_import.import_layer("project", root)
+
+    assert result["imported"] == []
+    assert len(rename.calls) == 1
+    assert "atomic no-replace import is unsupported on this filesystem" in result["skipped"]["first"]
+    assert "remaining imports stopped" in result["skipped"]["."]
+    assert not list((root / "skills").iterdir())
+    assert not list((root / "codex-autoharness" / "imports").iterdir())
+
+
+@pytest.mark.parametrize("native_errno", [errno.EEXIST, errno.EACCES])
+def test_other_native_errors_keep_errno_and_do_not_stop_layer(tmp_path, monkeypatch, native_errno):
+    for name in ("first", "second"):
+        _skill(tmp_path, name)
+    rename = _native_error(monkeypatch, native_errno)
+    with pytest.raises(OSError) as error:
+        skill_import._publish(1, "name", 2)
+    assert error.value.errno == native_errno
+
+    result = skill_import.import_layer("project", tmp_path / ".agents")
+
+    assert len(rename.calls) == 3
+    assert set(result["skipped"]) == {"first", "second"}
+    if native_errno == errno.EEXIST:
+        assert set(result["skipped"].values()) == {"destination exists"}
+
+
+def test_missing_native_symbol_is_reported_before_copying_any_skill(tmp_path, monkeypatch):
+    _skill(tmp_path)
+    monkeypatch.setattr(skill_import.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace())
+
+    def unexpected_copy(*args, **kwargs):
+        pytest.fail("unsupported native API should be detected before copying")
+
+    monkeypatch.setattr(skill_import, "_copy_tree", unexpected_copy)
+    root = tmp_path / ".agents"
+    result = skill_import.import_layer("project", root)
+    assert result["imported"] == []
+    assert "atomic no-replace import is unsupported on this filesystem" in result["skipped"]["."]
+    assert not root.exists()
