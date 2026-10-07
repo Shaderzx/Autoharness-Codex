@@ -2,7 +2,7 @@
 
 Codex AutoHarness learns reusable skills from Codex sessions, keeps related lessons together, and archives skills that stop getting used. Skills remain ordinary `SKILL.md` files under `.agents/skills`, so Codex can discover them through its native skill system.
 
-This is an independent Codex adaptation of [Tigerless Labs AutoHarness](https://github.com/tigerless-labs/autoharness). Its storage, validation, lifecycle, redaction, and provenance code build on that MIT-licensed project. The Codex integration is new. See [attribution](NOTICE.md) and the [feature comparison](docs/PARITY.md), including where the two implementations differ.
+Inspired by [Tigerless Labs AutoHarness](https://github.com/tigerless-labs/autoharness).
 
 ## Requirements
 
