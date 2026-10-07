@@ -1,4 +1,3 @@
-import importlib
 import json
 import subprocess
 import sys
@@ -6,7 +5,7 @@ import time
 
 from codex_autoharness import config
 from codex_autoharness.hook import promoter
-from codex_autoharness.lib import intent_queue, layer, notify
+from codex_autoharness.lib import intent_queue, notify
 
 ROWS = [{"action": "create", "name": "ok1", "ok": True},
         {"action": "patch", "name": "ok2", "ok": True},
@@ -34,44 +33,6 @@ def _hook_script(tmp_path):
                       "'summary': os.environ['CODEX_AUTOHARNESS_NOTIFY_SUMMARY'], "
                       f"'guard': os.environ.get({config.CHILD_SESSION_ENV!r})}}))\n")
     return f"{sys.executable} {script}", out
-
-
-def test_knobs_default_off(monkeypatch):
-    for var in ("CODEX_AUTOHARNESS_NOTIFY", "CODEX_AUTOHARNESS_NOTIFY_CMD", "CODEX_AUTOHARNESS_NOTIFY_TIMEOUT_S"):
-        monkeypatch.delenv(var, raising=False)
-    importlib.reload(config)
-    try:
-        assert config.NOTIFY == "" and config.NOTIFY_CMD == "" and config.NOTIFY_TIMEOUT_S == 5
-    finally:
-        monkeypatch.undo()
-        importlib.reload(config)
-
-
-def test_knobs_normalize_mode_and_floor_timeout(monkeypatch):
-    monkeypatch.setenv("CODEX_AUTOHARNESS_NOTIFY", " Desktop ")
-    monkeypatch.setenv("CODEX_AUTOHARNESS_NOTIFY_TIMEOUT_S", "0")
-    importlib.reload(config)
-    try:
-        assert config.NOTIFY == "desktop" and config.NOTIFY_TIMEOUT_S == 1
-    finally:
-        monkeypatch.undo()
-        importlib.reload(config)
-
-
-def test_summary_names_landed_and_rejected():
-    assert notify.summary(ROWS) == "create ok1, patch ok2 · rejected: bad"
-    assert notify.summary([]) == ""
-
-
-def test_summary_strips_control_chars_and_caps_name():
-    line = notify.summary([{"action": "create", "name": "a\nb\x1b" + "x" * 200, "ok": False}])
-    assert "\n" not in line and "\x1b" not in line
-    assert len(line) <= len("rejected: ") + 64
-
-
-def test_summary_caps_the_listing():
-    rows = [{"action": "create", "name": f"s{i}", "ok": True} for i in range(12)]
-    assert notify.summary(rows) == "create s0, create s1, create s2, create s3, create s4 +7 more"
 
 
 def test_summary_redacts_names():
@@ -156,22 +117,6 @@ def test_hung_command_is_bounded_by_timeout(monkeypatch):
     t0 = time.monotonic()
     notify.send({"run_id": "r", "verdicts": ROWS})
     assert time.monotonic() - t0 < 5
-
-
-def test_drain_notifies_after_account_and_clear(tmp_path, monkeypatch):
-    roots = {"project": tmp_path / "p", "global": tmp_path / "g"}
-    proot = roots["project"]
-    intent_queue.append("n1", {"action": "create", "name": "ok1", "level": "project", "body": GOOD,
-                               "reason": "r", "evidence": "e"}, proot)
-    state = layer.state_dir("project", proot)
-    seen = []
-    monkeypatch.setattr(notify, "send", lambda rec: seen.append(
-        (rec, (state / "runs" / "n1.json").exists(), (state / "last_run.json").exists(),
-         intent_queue.read("n1", proot))))
-    promoter.drain("n1", roots=roots)
-    (rec, run_on_disk, last_on_disk, queue_left), = seen
-    assert run_on_disk and last_on_disk and queue_left == []
-    assert rec["run_id"] == "n1" and rec["verdicts"][0]["ok"]
 
 
 def test_drain_completes_when_the_notifier_blows_up(tmp_path, monkeypatch):

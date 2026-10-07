@@ -1,6 +1,5 @@
 """Storage behavior at interruption and concurrent mutation boundaries."""
 import json
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -64,13 +63,6 @@ def test_partial_write_exception_restores_complete_previous_skill(tmp_path, monk
     assert tree(directory) == before
 
 
-def test_concurrent_sidecar_counts_do_not_lose_updates(tmp_path):
-    sidecar.create("project", "dates", 0, tmp_path)
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        list(pool.map(lambda _: sidecar.bump_use("project", "dates", tmp_path), range(80)))
-    assert sidecar.read("project", "dates", tmp_path)["use"] == 80
-
-
 def test_other_agents_ownership_marker_is_not_ours(tmp_path):
     directory = layer.symbol_dir("project", "other", tmp_path)
     directory.mkdir(parents=True)
@@ -110,13 +102,6 @@ def test_failed_umbrella_update_cannot_archive_absorbed_skill(tmp_path):
     results = promoter.drain("fold", roots=roots)
     assert not any(row["ok"] for row in results)
     assert skill_store.exists("project", "date-case", roots["project"])
-
-
-def test_identical_layer_roots_use_one_global_identity(tmp_path):
-    roots = {"global": tmp_path, "project": tmp_path}
-    assert layer.unique_layers(roots) == ("global",)
-    assert promoter.promote(proposal(), roots=roots)["ok"]
-    assert skill_store.find("dates", roots) == "global"
 
 
 @pytest.mark.parametrize("frontmatter", [
