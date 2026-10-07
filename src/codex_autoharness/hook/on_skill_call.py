@@ -101,6 +101,7 @@ def _shell_paths(command, cwd):
 def _literal_field(body, key):
     """Read the last matching literal JS field without executing its value."""
     try:
+        body = re.sub(r"\\.", lambda match: "/" if match[0] == r"\/" else match[0], body)
         fields = ast.parse("{" + body + "}", mode="eval").body
         if not isinstance(fields, ast.Dict):
             return None
