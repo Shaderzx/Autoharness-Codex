@@ -113,7 +113,7 @@ The transcript command runs synchronously and inherits the last model context re
 
 | Command | What it does |
 |---|---|
-| `status` | Shows installation paths, managed skills, archives, and pending proposal queues. |
+| `status` | Shows installation paths, queues, usage, accepted proposals, and merged or pruned skills. |
 | `doctor` | Checks the interpreter and Codex executable and explains the separate hook trust step. |
 | `index` | Prints the grouped index of managed project and global skills. |
 | `import-skills` | Copies global and project Claude skills into Codex discovery paths, preserving existing destinations. |
