@@ -61,7 +61,7 @@ Claude skill import copies regular files and support directories with executable
 ## Remaining limits
 
 - Hook events and payloads can differ across Codex versions and surfaces. CLI-level compatibility is not evidence that Desktop or Cloud lifecycle events were observed.
-- The isolated proposer copies file-based credentials. OS keyring-only credentials are not migrated, and OAuth refreshes in the temporary copy are not persisted to the user's Codex home.
+- The isolated proposer bridges Codex's file/direct OS keyring credentials and saves same-account OAuth refreshes to the original store after checking the source login and authentication settings. macOS uses the default user keychain; Linux requires `libsecret` and a running Secret Service. The nondefault encrypted keyring backend (`features.secret_auth_storage = true`) and process-local `ephemeral` credentials are not transferable. Learner locks do not coordinate foreground Codex; a foreground write between the final source check and save remains possible.
 - Long or unusually formatted transcripts can lose context through record/window limits or unsupported record types.
 - Redaction is pattern-based. Custom secrets and sensitive facts can pass through to the configured model provider.
 - Model-generated lessons can be wrong, overly broad, redundant, or susceptible to prompt injection despite format and content checks.

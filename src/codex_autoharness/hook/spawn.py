@@ -14,7 +14,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from codex_autoharness import config
-from codex_autoharness.hook import capture, promoter, session_carrier
+from codex_autoharness.hook import auth, capture, promoter, session_carrier
 from codex_autoharness.lib import (
     atomic,
     counters,
@@ -272,8 +272,8 @@ def _toml_value(value):
 
 
 def _isolated_home(directory, env, *, source_home=None, model_provider=None, reasoning_effort=None):
-    """Copy authentication and selected provider, excluding hooks/MCPs/plugins."""
-    source = Path(source_home or env.get("CODEX_HOME") or Path.home() / ".codex")
+    """Copy selected provider settings, excluding hooks/MCPs/plugins."""
+    source = Path(source_home or env.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
     target = directory / "codex-home"
     target.mkdir(mode=0o700)
     config_path = source / "config.toml"
@@ -288,6 +288,9 @@ def _isolated_home(directory, env, *, source_home=None, model_provider=None, rea
         selected["model_provider"] = model_provider
     if reasoning_effort == "":
         selected.pop("model_reasoning_effort", None)
+    # The OS keyring identity is tied to CODEX_HOME. The credential bridge
+    # reads the original store and persists refreshes back to that store.
+    selected["cli_auth_credentials_store"] = "file"
     provider_name = selected.get("model_provider")
     provider = data.get("model_providers", {}).get(provider_name, {})
     provider = {key: value for key, value in provider.items() if key in _PROVIDER_KEYS}
@@ -299,10 +302,6 @@ def _isolated_home(directory, env, *, source_home=None, model_provider=None, rea
     target_config = target / "config.toml"
     target_config.write_text("\n".join(lines) + "\n", encoding="utf-8")
     target_config.chmod(0o600)
-    auth = source / "auth.json"
-    if auth.is_file():
-        shutil.copyfile(auth, target / "auth.json")
-        (target / "auth.json").chmod(0o600)
     env["CODEX_HOME"] = str(target)
     for key in list(env):
         if key.startswith(("MCP_", "CLAUDE_")) or key in {"CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"}:
@@ -391,7 +390,7 @@ def _record_outcome(run_id, roots, error=None):
 def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=None,
              timeout_s=None, model=None, model_provider=None, reasoning_effort=None,
              source_home=None, evidence_text="", versions=None, carrier="bundle", session_id=None):
-    """Run an isolated proposer and admit current-source proposals exactly once."""
+    """Run an isolated authenticated proposer and admit validated intents once."""
     proot = roots.get(layer.PROJECT)
     intent_queue._path(run_id, proot)
     try:
@@ -404,11 +403,11 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
             directory = Path(tmp)
             output = directory / "proposal.json"
             env = child_env(run_id, proot)
-            home = _isolated_home(directory, env, source_home=source_home, model_provider=model_provider,
+            source = Path(source_home or env.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
+            home = _isolated_home(directory, env, source_home=source, model_provider=model_provider,
                                   reasoning_effort=reasoning_effort)
             cache_path, learner_id = None, None
             if carrier != "bundle":
-                source = Path(source_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
                 identity = [carrier, str(codex_bin or config.CODEX_BIN), str(source), model, reasoning_effort,
                             hashlib.sha256((home / "config.toml").read_bytes()).hexdigest(),
                             hashlib.sha256(_INSTRUCTION.encode()).hexdigest(),
@@ -420,17 +419,18 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
             argv = build_command(codex_bin=codex_bin, output_path=output, cwd=directory,
                                  model=model, reasoning_effort=reasoning_effort,
                                  carrier=carrier, learner_id=learner_id)
-            result = (spawn_fn(argv, env, bundle) if spawn_fn else
-                      _detached_spawn(argv, env, bundle, timeout_s=timeout_s))
-            if learner_id and getattr(result, "returncode", None) != 0 and not output.exists():
-                # An unavailable carrier or stale history may fail before output.
-                # Retry once, before parsing, staging or promoting anything.
-                cache_path.unlink(missing_ok=True)
-                shutil.rmtree(home / "sessions", ignore_errors=True)
-                argv = build_command(codex_bin=codex_bin, output_path=output, cwd=directory,
-                                     model=model, reasoning_effort=reasoning_effort, carrier=carrier)
+            with auth.isolated_credentials(source, home):
                 result = (spawn_fn(argv, env, bundle) if spawn_fn else
                           _detached_spawn(argv, env, bundle, timeout_s=timeout_s))
+                if learner_id and getattr(result, "returncode", None) != 0 and not output.exists():
+                    # Retry once before parsing or promotion, retaining any
+                    # OAuth refresh already saved in this private home.
+                    cache_path.unlink(missing_ok=True)
+                    shutil.rmtree(home / "sessions", ignore_errors=True)
+                    argv = build_command(codex_bin=codex_bin, output_path=output, cwd=directory,
+                                         model=model, reasoning_effort=reasoning_effort, carrier=carrier)
+                    result = (spawn_fn(argv, env, bundle) if spawn_fn else
+                              _detached_spawn(argv, env, bundle, timeout_s=timeout_s))
             if getattr(result, "returncode", None) != 0:
                 raise RunnerError("child_exit_failure")
             if not output.is_file() or output.stat().st_size > MAX_OUTPUT_BYTES:
@@ -455,6 +455,9 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
     except RunnerError as exc:
         _record_outcome(run_id, roots, str(exc))
         raise
+    except auth.AuthError as exc:
+        _record_outcome(run_id, roots, str(exc))
+        raise RunnerError(str(exc)) from exc
     except (OSError, ValueError, UnicodeError) as exc:
         _record_outcome(run_id, roots, "runner_io_or_config_error")
         raise RunnerError("runner_io_or_config_error") from exc

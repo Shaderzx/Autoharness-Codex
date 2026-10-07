@@ -35,11 +35,16 @@ def rollout(home, text="previous redacted learner bundle", identity=LEARNER_ID):
     return path
 
 
-def child(calls, *, output='{"intents":[]}'):
+def child(calls, *, output='{"intents":[]}', refresh=None):
     """Create a proposer stub that records calls and writes history and output."""
     def invoke(argv, env, bundle):
         """Record one isolated invocation and emit its configured proposal."""
         calls.append((list(argv), dict(env), bundle))
+        if refresh:
+            auth_path = Path(env["CODEX_HOME"]) / "auth.json"
+            credentials = json.loads(auth_path.read_text())
+            credentials["tokens"]["refresh_token"], credentials["last_refresh"] = refresh
+            auth_path.write_text(json.dumps(credentials))
         rollout(env["CODEX_HOME"])
         Path(argv[argv.index("--output-last-message") + 1]).write_text(output)
         return SimpleNamespace(returncode=0)
@@ -55,11 +60,17 @@ def cached(roots):
 def test_reuses_only_owned_learner_and_retains_isolation(setup, carrier):
     """Reuse the learner UUID without importing parent content or exposing tools."""
     roots, source = setup
+    credentials = {"tokens": {"id_token": "fake-id", "access_token": "fake-access",
+                              "refresh_token": "original", "account_id": "fixture-account"},
+                   "last_refresh": "2026-10-07T00:00:00Z"}
+    (source / "auth.json").write_text(json.dumps(credentials))
     rollout(source, "UNREDACTED_PARENT_SESSION", identity="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
     calls = []
     for number in range(2):
         spawn.run("current evidence", f"run-{number}", roots=roots, session_id="host-session",
-                  carrier=carrier, spawn_fn=child(calls), model="trigger-model", reasoning_effort="high")
+                  carrier=carrier, spawn_fn=child(calls, refresh=(f"learner-{number}", f"2026-10-08T00:00:0{number}Z")),
+                  model="trigger-model", reasoning_effort="high")
+        assert json.loads((source / "auth.json").read_text())["tokens"]["refresh_token"] == f"learner-{number}"
     first, second = (item[0] for item in calls)
     assert carrier not in first and "--ephemeral" not in first
     assert second[-3:] == [carrier, LEARNER_ID, "-"]
@@ -120,10 +131,15 @@ def test_distinct_session_and_routing_configs_never_share_history(setup):
     assert len(cached(roots)) == 5
 
 
-def test_unavailable_resume_retries_fresh_before_any_promotion(setup):
-    """Retry failed reuse fresh and persist exactly one admitted change."""
-    roots, _ = setup
-    spawn.run("episode", "seed", roots=roots, session_id="host", carrier="resume", spawn_fn=child([]))
+@pytest.mark.parametrize("carrier", ["resume", "fork"])
+def test_unavailable_resume_retries_fresh_before_any_promotion(setup, carrier):
+    """Persist OAuth refresh through both attempts while promoting only once."""
+    roots, source = setup
+    credentials = {"tokens": {"id_token": "fake-id", "access_token": "fake-access",
+                              "refresh_token": "original", "account_id": "fixture-account"},
+                   "last_refresh": "2026-10-07T00:00:00Z"}
+    (source / "auth.json").write_text(json.dumps(credentials))
+    spawn.run("episode", "seed", roots=roots, session_id="host", carrier=carrier, spawn_fn=child([]))
     calls = []
     row = dict.fromkeys(spawn._INTENT_KEYS)
     row.update(action="create", name="fallback-rule", level="project", reason="Lesson",
@@ -131,13 +147,21 @@ def test_unavailable_resume_retries_fresh_before_any_promotion(setup):
     def failing_resume(argv, env, bundle):
         """Fail the reuse attempt and produce a proposal only on fresh fallback."""
         calls.append(argv)
-        if "resume" in argv:
+        auth_path = Path(env["CODEX_HOME"]) / "auth.json"
+        credentials = json.loads(auth_path.read_text())
+        if carrier in argv:
+            credentials["tokens"]["refresh_token"] = "reuse-attempt"
+            credentials["last_refresh"] = "2026-10-08T00:00:00Z"
+            auth_path.write_text(json.dumps(credentials))
             return SimpleNamespace(returncode=1)
-        return child([], output=json.dumps({"intents": [row]}))(argv, env, bundle)
-    verdicts = spawn.run("episode", "retry", roots=roots, session_id="host", carrier="resume", spawn_fn=failing_resume)
-    assert len(calls) == 2 and "resume" in calls[0] and "resume" not in calls[1]
+        assert credentials["tokens"]["refresh_token"] == "reuse-attempt"
+        return child([], output=json.dumps({"intents": [row]}),
+                     refresh=("fresh-fallback", "2026-10-09T00:00:00Z"))(argv, env, bundle)
+    verdicts = spawn.run("episode", "retry", roots=roots, session_id="host", carrier=carrier, spawn_fn=failing_resume)
+    assert len(calls) == 2 and carrier in calls[0] and carrier not in calls[1]
     assert [verdict["ok"] for verdict in verdicts] == [True]
     assert len(ledger.read("project", "fallback-rule", roots["project"])) == 1
+    assert json.loads((source / "auth.json").read_text())["tokens"]["refresh_token"] == "fresh-fallback"
 
 
 def test_failed_carrier_with_output_never_retries_or_lands(setup):
