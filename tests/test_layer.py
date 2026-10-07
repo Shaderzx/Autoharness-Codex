@@ -7,6 +7,7 @@ from codex_autoharness.lib import counters, git_exclude, layer, sidecar, skill_s
 
 
 def _git(cwd, *args):
+    """Run fixture Git commands with local commit identity and fail on errors."""
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
         cwd=cwd, check=True, capture_output=True,
