@@ -314,6 +314,7 @@ def _isolated_home(directory, env, *, source_home=None, model_provider=None, rea
 def _detached_spawn(argv, env, bundle, *, timeout_s=None):
     """Run one bounded proposer process without forwarding its output."""
     def terminate(signum, frame):
+        """Unwind worker termination through private-home and process cleanup."""
         raise SystemExit(128 + signum)  # unwind private-home and process cleanup on worker termination
     previous = signal.signal(signal.SIGTERM, terminate) if threading.current_thread() is threading.main_thread() else None
     try:

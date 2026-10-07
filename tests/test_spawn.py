@@ -145,6 +145,7 @@ def test_failed_child_with_valid_output_never_lands(tmp_path):
 
 @pytest.mark.parametrize("mode,error", [("timeout", "timeout"), ("failure", "child_exit_failure"), ("success", None)])
 def test_timeout_records_only_safe_code(tmp_path, mode, error):
+    """Every proposer exit cleans descendants and records only safe failure codes."""
     roots = _roots(tmp_path)
     original_handler = signal.getsignal(signal.SIGTERM)
     pids = tmp_path / "pids"
@@ -158,6 +159,7 @@ pathlib.Path(sys.argv[3]).write_text('{"intents":[]}')
 sys.exit(1 if sys.argv[2] == "failure" else 0)
 """
     def timeout(argv, env, bundle):
+        """Run a real proposer stub that leaves a descendant behind at exit."""
         homes.append(Path(env["CODEX_HOME"]))
         output = argv[argv.index("--output-last-message") + 1]
         return spawn._detached_spawn([sys.executable, "-c", code, str(pids), mode, output], env, bundle, timeout_s=1)
@@ -188,6 +190,7 @@ sys.exit(1 if sys.argv[2] == "failure" else 0)
 
 
 def test_terminated_worker_cleans_its_proposer(tmp_path):
+    """SIGTERM reaps the worker's proposer and removes its private Codex home."""
     marker = tmp_path / "proposer-pid"
     code = ("import json,os,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text("
             "json.dumps({'pid':os.getpid(), 'home':os.environ['CODEX_HOME']})); time.sleep(30)")
@@ -277,6 +280,7 @@ def test_snapshots_keep_at_most_five_and_failure_aborts(tmp_path, monkeypatch):
 
 
 def test_main_advances_offset_only_after_success(tmp_path, monkeypatch):
+    """Missing sources and failed reflections preserve the transcript watermark."""
     roots = _roots(tmp_path)
     transcript = tmp_path / "transcript.jsonl"
     counters.write_session_offset("session", 7, roots["project"])

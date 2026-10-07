@@ -47,6 +47,7 @@ def test_run_identifiers_stay_distinct_for_unsafe_session_ids():
 
 @pytest.mark.parametrize("event_name,curator", [("Stop", False), ("SessionEnd", False), ("Stop", True)])
 def test_detached_launch_failure_is_reported(tmp_path, monkeypatch, event_name, curator):
+    """Failed reflection and curator launches retain activity and retry successfully."""
     roots = _roots(tmp_path)
     monkeypatch.setattr(config, "REFLECT_EVERY_N", 2 if curator else 1)
     monkeypatch.setattr(config, "CONSOLIDATE_EVERY_N", 1 if curator else 0)
@@ -56,6 +57,7 @@ def test_detached_launch_failure_is_reported(tmp_path, monkeypatch, event_name, 
         assert "transcript" in dispatch.dispatch(event, roots=roots)["error"]
         assert counters.session_count("session", roots[layer.PROJECT]) == 1
     def fail(*args, **kwargs):
+        """Simulate launch failure alongside newly arriving session activity."""
         if not curator:
             counters.bump_session("session", roots[layer.PROJECT])  # activity racing the failed launch
         raise OSError("no interpreter")

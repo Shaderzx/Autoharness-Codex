@@ -129,6 +129,7 @@ def _session_settings(event, root):
 
 
 def _worker_launch(argv, run_id, roots):
+    """Detach a worker and persist a safe failure account if launch fails."""
     try:
         subprocess.Popen(  # host-detach: fire-and-forget so the Stop hook returns immediately
             argv,
@@ -144,6 +145,7 @@ def _worker_launch(argv, run_id, roots):
 
 
 def _detached_launch(transcript_path, session_id, run_id, roots, *, settings=None, end_offset=None):
+    """Launch reflection with the triggering session's transcript and model settings."""
     return _worker_launch(
         [sys.executable, "-m", "codex_autoharness.hook.spawn",
          str(transcript_path), str(session_id), run_id,
@@ -152,6 +154,7 @@ def _detached_launch(transcript_path, session_id, run_id, roots, *, settings=Non
 
 
 def _reflect(event, result, roots, launch=None):
+    """Launch a unique reflection or report a missing transcript path for retry."""
     # The activity count resets, so it cannot distinguish successive windows.
     run_id = f"{_run_id(result)}-{uuid.uuid4().hex[:12]}"
     transcript_path = event.get("transcript_path")
@@ -168,6 +171,7 @@ def _reflect(event, result, roots, launch=None):
 
 
 def _consolidate_launch(run_id, roots, *, settings=None):
+    """Launch a curator using the current managed library and session model settings."""
     return _worker_launch(
         [sys.executable, "-m", "codex_autoharness.hook.spawn", "--curate", run_id,
          str(roots[layer.PROJECT]), str(roots[layer.GLOBAL]), *_job_arguments(settings)],
@@ -207,6 +211,7 @@ def _activity(event, root):
 
 
 def _curation_count(root):
+    """Return eligible tool activity without advancing the successful-launch watermark."""
     threshold = config.CONSOLIDATE_EVERY_N
     if threshold <= 0:
         return None
@@ -219,6 +224,7 @@ def _curation_count(root):
 
 
 def dispatch(event, *, roots=None, reflect=None, consolidate=None):
+    """Route host hooks while preserving failed launch activity and child isolation."""
     if not isinstance(event, dict):
         return {"ignored": True, "reason": "malformed hook input"}
     name = event.get("hook_event_name")
