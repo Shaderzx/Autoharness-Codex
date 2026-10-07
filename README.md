@@ -15,23 +15,51 @@ The CLI also supports explicit learning from a transcript when hooks are unavail
 
 ## Install
 
-Clone the repository and enter its directory:
+Install directly from the GitHub-hosted Codex marketplace:
+
+```sh
+codex plugin marketplace add Shaderzx/Autoharness-Codex --ref main
+codex plugin add codex-autoharness@codex-autoharness-local
+```
+
+The marketplace retains the `codex-autoharness-local` identifier for compatibility with earlier installations. A remote install downloads the repository into Codex's own marketplace and plugin caches; you do not need a local checkout. This is a repository-hosted marketplace, not a listing in the public Codex plugin directory.
+
+Restart Codex, open `/hooks`, and review and trust the Codex AutoHarness plugin source. The plugin carries its own hooks source and leaves `~/.codex/hooks.json` unchanged. Codex trusts the source's exact contents, so an update can require renewed approval. Installation never changes hook trust.
+
+### Updates and version pins
+
+With the Git marketplace above, Codex CLI 0.160.1 automatically checks its configured Git ref at plugin startup and refreshes installed plugin caches when the repository revision changes. This uses Codex's native Git trust policy and requires network access. It is not a timer running while Codex is closed. Changes on `main` can arrive even when the plugin's version string stays the same.
+
+To request an update explicitly:
+
+```sh
+codex plugin marketplace upgrade codex-autoharness-local
+```
+
+The command follows the configured ref. To freeze the installed code, replace `main` in the marketplace add command with a full 40-character commit SHA. Both automatic and explicit upgrades preserve that pin. After changing hook contents, restart Codex and review the modified source in `/hooks`; native updates do not grant trust.
+
+Codex owns `.tmp/marketplaces/` and `plugins/cache/` under its configuration home and may replace those files during updates. Keep custom changes in a separate checkout and use the local installation below. Native marketplace updates do not update that checkout, a separately installed Python package, direct hooks, or learned skills under `.agents/skills`.
+
+If this marketplace is already registered from a local checkout, or you want to change its ref, remove its registration before adding the chosen source again:
+
+```sh
+codex plugin marketplace remove codex-autoharness-local
+codex plugin marketplace add Shaderzx/Autoharness-Codex --ref main
+codex plugin add codex-autoharness@codex-autoharness-local
+```
+
+### Local checkout and maintenance CLI
+
+For a local marketplace that you update yourself:
 
 ```sh
 git clone https://github.com/Shaderzx/Autoharness-Codex.git
 cd Autoharness-Codex
-```
-
-Then install the plugin:
-
-```sh
 codex plugin marketplace add .
 codex plugin add codex-autoharness@codex-autoharness-local
 ```
 
-Restart Codex, open `/hooks`, and review and trust the Codex AutoHarness plugin source. The plugin carries its own hooks source and leaves `~/.codex/hooks.json` unchanged. Codex trusts the source's exact contents, so an update can require renewed approval. Installation never changes hook trust.
-
-The local marketplace makes this checkout installable without a hosted release. Keep it available for future local reinstalls. The plugin includes the `$codex-learn` helper and a portable Python launcher.
+Keep the checkout available for local reinstalls. Local marketplace and direct hooks installations do not automatically fetch repository updates. Both plugin sources include the `$codex-learn` helper and a portable Python launcher.
 
 For the maintenance CLI, install the Python package in a virtual environment:
 

@@ -8,7 +8,7 @@ Codex AutoHarness adapts the upstream storage and maintenance pipeline under its
 
 | Capability | Tigerless Labs AutoHarness | Codex AutoHarness | Practical difference |
 |---|---|---|---|
-| Host integration | Claude Code plugin and hooks | Native Codex plugin and lifecycle hooks, with a Python CLI | Local plugin marketplace installation uses its own hooks source. Direct hook installation is also available. Both require `/hooks` trust. |
+| Host integration | Claude Code plugin and hooks | Native Codex plugin and lifecycle hooks, with a Python CLI | GitHub-hosted and local plugin marketplace installations use their own hooks source. Direct hook installation is also available. All require `/hooks` trust. |
 | Native skill files | `.claude/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md` | Missing global/project Claude skills are copied automatically at `SessionStart` and for the installed scope during direct installation; `import-skills` also runs on demand. Originals and existing Codex destinations are preserved. |
 | Automatic learning | Reflects after a tool-call threshold | Reflects after a tool-call threshold | Both default to 50 main-session tool calls and start learning after the turn ends. |
 | Tail flush | Session-end capture | `SessionEnd` flush | Depends on the host actually emitting the event; an abruptly killed host may not flush its tail. |
@@ -35,7 +35,7 @@ Codex AutoHarness adapts the upstream storage and maintenance pipeline under its
 | Session model | Host session supplies model context | Each background learner and curator inherits its triggering session's model, provider identity, and reasoning effort | Job arguments freeze the selection; concurrent sessions and later model switches cannot replace it. No configured concurrent-session limit. |
 | Direct staging | Plugin-scoped `stage_skill` MCP | `stage` CLI and optional stdio `mcp` server | The ordinary Codex proposer uses structured output rather than MCP tool calls. |
 | Fork carrier | Experimental resume/fork option; bundle default | Optional isolated learner `resume`/`fork`; bundle default | Reuses only bounded redacted learner history, never the user's session. Requires the corresponding Codex `exec` subcommand; no provider-side cache benefit is guaranteed. |
-| Distribution and updates | Claude plugin marketplace | Local Codex plugin marketplace and Python package | No hosted marketplace listing, automatic updater, or remote publication is implied by this build. |
+| Distribution and updates | Claude plugin marketplace | GitHub-hosted Codex marketplace, native automatic Git updates, local marketplace, and Python package | The remote install follows `main` or a pinned commit through Codex's native updater. Local checkout/direct installs and separate Python packages need manual updates. No public Codex plugin directory listing is claimed. |
 | Performance evidence | Upstream cites broader harness research | No comparative benchmark claimed | Upstream research percentages do not measure this port. |
 
 ## Usage measurement
