@@ -136,8 +136,11 @@ def import_layer(lyr, root=None, *, deadline=None):
     except (OSError, ValueError) as exc:
         result["skipped"]["."] = str(exc)
     if result["imported"]:
-        with lock_root(root):
-            git_exclude.sync(root)
+        try:
+            with lock_root(root):
+                git_exclude.sync(root)
+        except (OSError, ValueError):
+            pass  # Published imports remain valid when the optional Git refresh fails.
     return result
 
 
