@@ -58,6 +58,7 @@ def test_command_is_fresh_read_only_and_disables_tools(tmp_path):
 
 
 def test_provider_auth_copied_privately_without_extensions(tmp_path, isolated_source_home):
+    """Provider and private auth transfer must exclude executable integrations."""
     original = '''model = "codex-model"
 model_provider = "custom"
 approval_policy = "never"
@@ -82,8 +83,10 @@ plugins = true
     assert copied["model_providers"]["custom"]["http_headers"] == {"Authorization": "secret-example"}
     assert "mcp_servers" not in copied and "features" not in copied
     assert not (target / "hooks.json").exists()
-    assert (target / "auth.json").read_bytes() == (isolated_source_home / "auth.json").read_bytes()
-    assert (target / "auth.json").stat().st_mode & 0o777 == 0o600
+    assert copied["cli_auth_credentials_store"] == "file"
+    with spawn.auth.isolated_credentials(isolated_source_home, target):
+        assert (target / "auth.json").read_bytes() == (isolated_source_home / "auth.json").read_bytes()
+        assert (target / "auth.json").stat().st_mode & 0o777 == 0o600
     assert "MCP_TOKEN" not in env
     assert (isolated_source_home / "config.toml").read_text() == original
 
