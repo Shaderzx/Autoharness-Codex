@@ -111,6 +111,7 @@ def restore_snapshot(lyr, name, snapshot, root=None):
             staged = Path(temporary) / name
             staged.mkdir()
             seen, size = set(), 0
+            directory_modes = {}
             try:
                 with tarfile.open(snapshot, "r:gz") as archive:
                     for member in archive:
@@ -129,6 +130,7 @@ def restore_snapshot(lyr, name, snapshot, root=None):
                         target = staged.joinpath(*relative)
                         if member.isdir():
                             target.mkdir(parents=True, exist_ok=True)
+                            directory_modes[target] = member.mode & 0o777
                         else:
                             target.parent.mkdir(parents=True, exist_ok=True)
                             with archive.extractfile(member) as source, target.open("xb") as output:
@@ -143,6 +145,9 @@ def restore_snapshot(lyr, name, snapshot, root=None):
                 raise ValueError("cannot restore an unmanaged snapshot skill")
             if (validate._frontmatter((staged / SKILL_FILE).read_text()) or {}).get("name") != name:
                 raise ValueError("snapshot skill name does not match")
+            # Apply restrictive directory modes after extraction and validation, children first.
+            for directory in sorted(directory_modes, key=lambda path: len(path.parts), reverse=True):
+                directory.chmod(directory_modes[directory])
             os.replace(staged, dest)
         return dest
 

@@ -131,6 +131,8 @@ def test_restore_snapshot_preserves_files_and_refuses_overwrite(cli_roots, capsy
     script.parent.mkdir()
     script.write_text("#!/bin/sh\nexit 0\n")
     script.chmod(0o755)
+    directory.chmod(0o700)
+    script.parent.chmod(0o500)
     (directory / "ledger.jsonl").write_text('{"evidence":"original"}\n')
     original = {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
     spawn._snapshot_skills("before", roots)
@@ -144,6 +146,8 @@ def test_restore_snapshot_preserves_files_and_refuses_overwrite(cli_roots, capsy
     assert cli.main(command) == 0
     assert {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()} == original
     assert script.stat().st_mode & 0o777 == 0o755
+    assert directory.stat().st_mode & 0o777 == 0o700
+    assert script.parent.stat().st_mode & 0o777 == 0o500
     assert (archived / "SKILL.md").read_text() == "Newer lesson"
     assert snapshot.is_file()
 
