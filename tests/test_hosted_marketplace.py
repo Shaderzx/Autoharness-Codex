@@ -83,7 +83,10 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
             process.stdin.flush()
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                message = messages.get(timeout=max(0.1, deadline - time.monotonic()))
+                try:
+                    message = messages.get(timeout=max(0.1, deadline - time.monotonic()))
+                except queue.Empty:
+                    break
                 if message.get("id") == number:
                     assert "error" not in message, message
                     return message["result"]
