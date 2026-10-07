@@ -130,17 +130,20 @@ def test_detached_worker_imports_from_an_unrelated_directory(roots, tmp_path, mo
     assert probe.stdout.strip() == "worker-import-ok"
 
 
-@pytest.mark.parametrize("tool,input_key", [
-    ("Read", "file_path"),
-    ("mcp__lean_ctx__ctx_read", "path"),
-    ("mcp__lean_ctx__ctx_read", "paths"),
-    ("exec", "paths"),
+@pytest.mark.parametrize("tool,input_key,subdir", [
+    ("Read", "file_path", "."),
+    ("mcp__lean_ctx__ctx_read", "path", "."),
+    ("mcp__lean_ctx__ctx_read", "paths", "."),
+    ("exec", "paths", "."),
+    ("exec", "paths", "project [brackets] {braces}"),
+    ("exec", "path", "project [brackets] {braces}"),
 ])
-def test_native_successful_skill_read_counts_use(roots, tool, input_key):
+def test_native_successful_skill_read_counts_use(roots, tool, input_key, subdir):
+    roots[layer.PROJECT] /= subdir
     path = managed_skill(roots)
     second = managed_skill(roots, "second-reader") if input_key == "paths" else None
-    value = [str(path), str(second), str(path), 123] if second else str(path)
-    arguments = (f"await tools.mcp__lean_ctx__ctx_read({{paths: {json.dumps(value)}}});"
+    value = [str(path), str(second), str(path), 123, [str(path)], None, True] if second else str(path)
+    arguments = (f"await tools.mcp__lean_ctx__ctx_read({{{input_key}: {json.dumps(value)}}});"
                  if tool == "exec" else {input_key: value})
     post_tool(roots, tool, arguments)
     assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 1

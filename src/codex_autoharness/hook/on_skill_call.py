@@ -17,8 +17,8 @@ from codex_autoharness.lib.locking import lock_roots
 
 _READERS = {"cat", "head", "tail", "sed", "rg", "grep", "less", "more"}
 _SHELLS = {"Bash", "exec_command", "shell", "ctx_shell"}
-_NESTED = re.compile(r"(?:tools\.)?([\w]+)\(\s*\{([^{}]*)\}", re.S)
-_LITERAL = r'''("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')'''
+_LITERAL = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')'''
+_NESTED = re.compile(r"(?:tools\.)?([\w]+)\(\s*\{((?:" + _LITERAL + r"|[^{}'\"`])*)\}", re.S)
 
 
 def _skill_name(event):
@@ -98,13 +98,20 @@ def _shell_paths(command, cwd):
 
 
 def _literal_field(body, key):
-    literal = r"(\[[^\[\]]*\])" if key == "paths" else _LITERAL
-    match = re.search(r"\b" + re.escape(key) + r"\s*:\s*" + literal, body)
-    if match:
-        try:
-            return ast.literal_eval(match.group(1))
-        except (SyntaxError, ValueError):
-            pass
+    try:
+        fields = ast.parse("{" + body + "}", mode="eval").body
+        if not isinstance(fields, ast.Dict):
+            return None
+        for field, value in zip(fields.keys, fields.values, strict=True):
+            name = field.id if isinstance(field, ast.Name) else ast.literal_eval(field)
+            if name != key:
+                continue
+            if key == "paths" and isinstance(value, ast.List):
+                return [item.value for item in value.elts
+                        if isinstance(item, ast.Constant) and isinstance(item.value, str)]
+            return ast.literal_eval(value)
+    except (SyntaxError, ValueError, TypeError):
+        pass
     return None
 
 
