@@ -221,6 +221,7 @@ def _rollback_transaction(record, root, journal, backup):
 
 
 def _check_backup(root, backup):
+    """Reject redirected paths and unsupported file types before restoring a backup."""
     for directory, dirs, files in os.walk(backup, followlinks=False):
         for leaf in dirs + files:
             path = layer.checked_path(root, os.path.relpath(os.path.join(directory, leaf), root))

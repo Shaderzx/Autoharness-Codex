@@ -48,6 +48,7 @@ def test_project_root_repo_subdir_stays_cwd_no_jump_to_repo_root(main_repo, monk
 
 
 def test_project_root_linked_worktree_maps_to_main_root(linked_worktree, main_repo, monkeypatch):
+    """Keep linked worktree learning in the main checkout's project library."""
     assert _project_root_at(monkeypatch, linked_worktree) == main_repo / ".agents"
 
 
@@ -158,6 +159,7 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
 
 
 def test_project_root_worktree_subdir_maps_to_main_root(linked_worktree, main_repo, monkeypatch):
+    """Resolve a linked worktree's nested directory to the main project library."""
     sub = linked_worktree / "src"
     sub.mkdir()
     assert _project_root_at(monkeypatch, sub) == main_repo / ".agents"
