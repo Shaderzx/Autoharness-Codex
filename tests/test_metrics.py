@@ -26,12 +26,15 @@ def test_usage_funnel_and_categories_are_read_only(tmp_path):
     runs.mkdir()
     (runs / "one.json").write_text(json.dumps({"verdicts": [
         {"ok": True, "findings": []}, {"ok": False, "findings": ["structure"]}]}))
+    (runs / "broken.json").write_text("[]")
+    (runs / "bad-verdicts.json").write_text(json.dumps({"verdicts": [
+        None, {"ok": False, "findings": None}, {"ok": True, "findings": [{}]}]}))
     before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     result = metrics.collect(roots)["project"]
     assert result["use_total"] == 3 and result["view_total"] == 1
     assert result["recall_rate"] == 3 / 10 and result["used_symbol_share"] == 2 / 3
     assert result["reuse_after_patch"] == 1 / 2
-    assert result["funnel"] == {"proposed": 2, "landed": 1, "rejected": 1}
+    assert result["funnel"] == {"proposed": 4, "landed": 2, "rejected": 2}
     assert result["reject_families"] == {"structure": 1}
     categories = result["by_category"]
     assert categories["general"]["live_symbols"] == 2
