@@ -25,7 +25,7 @@ def roots(tmp_path):
 
 def managed_skill(roots, name="native-reader"):
     root = roots[layer.PROJECT]
-    skill_store.write_body(layer.PROJECT, name, "---\nname: native-reader\n"
+    skill_store.write_body(layer.PROJECT, name, f"---\nname: {name}\n"
                            "description: Read project conventions.\n---\nUse project conventions.\n", root)
     sidecar.create(layer.PROJECT, name, anchor=0, root=root)
     return layer.symbol_dir(layer.PROJECT, name, root) / "SKILL.md"
@@ -133,11 +133,19 @@ def test_detached_worker_imports_from_an_unrelated_directory(roots, tmp_path, mo
 @pytest.mark.parametrize("tool,input_key", [
     ("Read", "file_path"),
     ("mcp__lean_ctx__ctx_read", "path"),
+    ("mcp__lean_ctx__ctx_read", "paths"),
+    ("exec", "paths"),
 ])
 def test_native_successful_skill_read_counts_use(roots, tool, input_key):
     path = managed_skill(roots)
-    post_tool(roots, tool, {input_key: str(path)})
+    second = managed_skill(roots, "second-reader") if input_key == "paths" else None
+    value = [str(path), str(second), str(path), 123] if second else str(path)
+    arguments = (f"await tools.mcp__lean_ctx__ctx_read({{paths: {json.dumps(value)}}});"
+                 if tool == "exec" else {input_key: value})
+    post_tool(roots, tool, arguments)
     assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 1
+    if second:
+        assert sidecar.read(layer.PROJECT, "second-reader", roots[layer.PROJECT])["use"] == 1
 
 
 @pytest.mark.parametrize("tool,input_key,command", [

@@ -98,7 +98,8 @@ def _shell_paths(command, cwd):
 
 
 def _literal_field(body, key):
-    match = re.search(r"\b" + re.escape(key) + r"\s*:\s*" + _LITERAL, body)
+    literal = r"(\[[^\[\]]*\])" if key == "paths" else _LITERAL
+    match = re.search(r"\b" + re.escape(key) + r"\s*:\s*" + literal, body)
     if match:
         try:
             return ast.literal_eval(match.group(1))
@@ -114,8 +115,10 @@ def _read_paths(event):
     cwd = args.get("workdir") or args.get("cwd") or event.get("cwd") or os.getcwd()
     if tool == "Read" or tool.endswith("ctx_read") or tool in ("read_file", "read_text_file"):
         path = args.get("file_path") or args.get("path") or event.get("file_path")
-        if isinstance(path, str):
-            yield path, cwd
+        paths = [path, *(args.get("paths") if isinstance(args.get("paths"), list) else [])]
+        for path in paths:
+            if isinstance(path, str):
+                yield path, cwd
     elif tool in _SHELLS or tool.endswith("ctx_shell"):
         yield from _shell_paths(args.get("command") or args.get("cmd"), cwd)
     elif tool == "exec":
@@ -124,7 +127,7 @@ def _read_paths(event):
             # ponytail: only literal arguments are observed; dynamic JavaScript
             # needs the host's nested tool events for accurate attribution.
             for nested_tool, body in _NESTED.findall(code):
-                nested_args = {key: value for key in ("path", "file_path", "command", "cmd", "cwd", "workdir")
+                nested_args = {key: value for key in ("path", "paths", "file_path", "command", "cmd", "cwd", "workdir")
                                if (value := _literal_field(body, key)) is not None}
                 yield from _read_paths({"tool_name": nested_tool, "tool_input": nested_args, "cwd": cwd})
 
