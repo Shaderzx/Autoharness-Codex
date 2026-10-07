@@ -325,8 +325,11 @@ def _settings(source):
         selected = profiles.get(profile, {})
         if not isinstance(selected, dict):
             raise AuthError("auth_store_invalid")
+        profile_features = selected.get("features", {})
+        if not isinstance(features, dict) or not isinstance(profile_features, dict):
+            raise AuthError("auth_store_invalid")
         data = {**data, **selected}
-        features = data.get("features", {})
+        features = {**features, **profile_features}
     if not isinstance(features, dict):
         raise AuthError("auth_store_invalid")
     mode = data.get("cli_auth_credentials_store", "file")

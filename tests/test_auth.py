@@ -215,10 +215,19 @@ def test_ephemeral_store_does_not_copy_persisted_credentials(homes):
         assert not (target / "auth.json").exists()
 
 
-def test_encrypted_keyring_reports_safe_unsupported_error(homes):
-    """Encrypted keyring reports safe unsupported error."""
+@pytest.mark.parametrize("profile_features, encrypted", [
+    ("", True), ("hooks = false", True), ("secret_auth_storage = false", False),
+])
+def test_encrypted_keyring_reports_safe_unsupported_error(homes, profile_features, encrypted):
+    """Profile feature overrides retain inherited encrypted-keyring settings."""
     source, target = homes
-    (source / "config.toml").write_text('cli_auth_credentials_store = "keyring"\n[features]\nsecret_auth_storage = true\n')
+    settings = 'profile = "work"\ncli_auth_credentials_store = "keyring"\n[features]\nsecret_auth_storage = true\n'
+    if profile_features:
+        settings += "[profiles.work.features]\n" + profile_features + "\n"
+    (source / "config.toml").write_text(settings)
+    assert auth._settings(source) == ("keyring", encrypted)
+    if not encrypted:
+        return
     with pytest.raises(auth.AuthError, match="^auth_encrypted_keyring_unsupported$"):
         with auth.isolated_credentials(source, target):
             pytest.fail("encrypted keyring is a different storage contract")
@@ -262,6 +271,8 @@ def test_invalid_known_keyring_fields_use_auto_file_fallback(homes, monkeypatch,
 @pytest.mark.parametrize("setting", [
     'cli_auth_credentials_store = ["fake-secret"]',
     'cli_auth_credentials_store = "keyring"\n[features]\nsecret_auth_storage = "fake-secret"',
+    'profile = "work"\nfeatures = "invalid"\n[profiles.work.features]\nhooks = false',
+    'profile = "work"\n[features]\nsecret_auth_storage = true\n[profiles.work]\nfeatures = "invalid"',
 ])
 def test_invalid_store_settings_have_sanitized_errors(homes, setting):
     """Invalid store settings have sanitized errors."""
