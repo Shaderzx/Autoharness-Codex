@@ -93,9 +93,12 @@ def test_invalid_or_different_account_refresh_cannot_replace_source(homes, mutat
     """Invalid or different account refresh cannot replace source."""
     source, target = homes
     write(source / "auth.json", credential())
-    with auth.isolated_credentials(source, target):
-        changed = {**credential("new", "2026-01-02T00:00:00Z"), **mutation}
-        write(target / "auth.json", changed)
+    try:
+        with auth.isolated_credentials(source, target):
+            changed = {**credential("new", "2026-01-02T00:00:00Z"), **mutation}
+            write(target / "auth.json", changed)
+    except auth.AuthError as exc:
+        assert str(exc) == "auth_invalid"
     assert json.loads((source / "auth.json").read_bytes()) == credential()
 
 
@@ -237,6 +240,21 @@ def test_invalid_keyring_token_structure_uses_auto_file_fallback(homes, monkeypa
     (source / "config.toml").write_text('cli_auth_credentials_store = "auto"\n')
     write(source / "auth.json", {"OPENAI_API_KEY": "fake-key"})
     monkeypatch.setattr(auth, "_keyring", lambda *args: b'{"tokens":"invalid-type"}')
+    with auth.isolated_credentials(source, target):
+        assert json.loads((target / "auth.json").read_bytes()) == {"OPENAI_API_KEY": "fake-key"}
+
+
+@pytest.mark.parametrize("mutation", [
+    {"tokens": {**credential()["tokens"], "account_id": 1}},
+    {"last_refresh": "invalid-date"}, {"last_refresh": "2026-01-02T00:00:00"},
+    {"auth_mode": "unknown"},
+])
+def test_invalid_known_keyring_fields_use_auto_file_fallback(homes, monkeypatch, mutation):
+    """Match Codex's rejection of malformed known auth fields before auto fallback."""
+    source, target = homes
+    (source / "config.toml").write_text('cli_auth_credentials_store = "auto"\n')
+    write(source / "auth.json", {"OPENAI_API_KEY": "fake-key"})
+    monkeypatch.setattr(auth, "_keyring", lambda *args: json.dumps({**credential(), **mutation}).encode())
     with auth.isolated_credentials(source, target):
         assert json.loads((target / "auth.json").read_bytes()) == {"OPENAI_API_KEY": "fake-key"}
 

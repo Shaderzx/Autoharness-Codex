@@ -235,9 +235,18 @@ def _decode(value):
         for key in ("auth_mode", "OPENAI_API_KEY", "last_refresh"):
             if data.get(key) is not None and not isinstance(data[key], str):
                 raise ValueError
+        if data.get("auth_mode") not in {None, "apikey", "chatgpt", "chatgptAuthTokens", "headers",
+                                          "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys"}:
+            raise ValueError
+        if data.get("last_refresh") is not None:
+            timestamp = data["last_refresh"]
+            if "T" not in timestamp.upper() or datetime.fromisoformat(timestamp.replace("Z", "+00:00")).utcoffset() is None:
+                raise ValueError
         tokens = data.get("tokens")
         if tokens is not None and (not isinstance(tokens, dict) or any(
                 not isinstance(tokens.get(key), str) for key in ("id_token", "access_token", "refresh_token"))):
+            raise ValueError
+        if tokens and tokens.get("account_id") is not None and not isinstance(tokens["account_id"], str):
             raise ValueError
         return data
     except (ValueError, UnicodeError, RecursionError) as exc:
