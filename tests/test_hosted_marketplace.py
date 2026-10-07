@@ -97,7 +97,11 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
             yield rpc
         finally:
             process.terminate()
-            process.wait(timeout=5)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
             reader.join(timeout=5)
             process.stdin.close()
             process.stdout.close()
