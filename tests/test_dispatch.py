@@ -8,7 +8,7 @@ import pytest
 
 from codex_autoharness import config
 from codex_autoharness.hook import dispatch
-from codex_autoharness.lib import layer
+from codex_autoharness.lib import counters, layer
 
 
 @pytest.fixture(autouse=True)
@@ -45,12 +45,37 @@ def test_run_identifiers_stay_distinct_for_unsafe_session_ids():
     assert first.endswith("-5") and second.endswith("-5")
 
 
-def test_detached_launch_failure_is_reported(tmp_path, monkeypatch):
+@pytest.mark.parametrize("event_name,curator", [("Stop", False), ("SessionEnd", False), ("Stop", True)])
+def test_detached_launch_failure_is_reported(tmp_path, monkeypatch, event_name, curator):
+    """Failed reflection and curator launches retain activity and retry successfully."""
+    roots = _roots(tmp_path)
+    monkeypatch.setattr(config, "REFLECT_EVERY_N", 2 if curator else 1)
+    monkeypatch.setattr(config, "CONSOLIDATE_EVERY_N", 1 if curator else 0)
+    dispatch.dispatch({"hook_event_name": "PreToolUse", "session_id": "session"}, roots=roots)
+    event = {"hook_event_name": event_name, "session_id": "session"}
+    if not curator:
+        assert "transcript" in dispatch.dispatch(event, roots=roots)["error"]
+        assert counters.session_count("session", roots[layer.PROJECT]) == 1
     def fail(*args, **kwargs):
+        """Simulate launch failure alongside newly arriving session activity."""
+        if not curator:
+            counters.bump_session("session", roots[layer.PROJECT])  # activity racing the failed launch
         raise OSError("no interpreter")
     monkeypatch.setattr(dispatch.subprocess, "Popen", fail)
-    result = dispatch._detached_launch("/tmp/transcript", "session", "run-0", _roots(tmp_path))
+    event["transcript_path"] = "/tmp/transcript"
+    result = dispatch.dispatch(event, roots=roots)
     assert "no interpreter" in result["error"]
+    assert counters.session_count("session", roots[layer.PROJECT]) == (1 if curator else 2)
+    state = layer.state_dir(layer.PROJECT, roots[layer.PROJECT])
+    assert counters._read_int(state / "last_curated_tool_count") == 0
+    assert json.loads((state / "last_run.json").read_text())["error"] == "worker_launch_failure"
+
+    launches = []
+    monkeypatch.setattr(dispatch.subprocess, "Popen", lambda *a, **k: launches.append(a))
+    assert "error" not in dispatch.dispatch(event, roots=roots)
+    assert len(launches) == 1
+    assert counters.session_count("session", roots[layer.PROJECT]) == (1 if curator else 0)
+    assert counters._read_int(state / "last_curated_tool_count") == (1 if curator else 0)
 
 
 def test_denied_reflector_write_reaches_the_host_as_deny_json(tmp_path, capsys):

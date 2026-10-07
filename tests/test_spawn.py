@@ -1,7 +1,10 @@
 import json
 import os
+import signal
 import subprocess
+import sys
 import tarfile
+import time
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -140,16 +143,89 @@ def test_failed_child_with_valid_output_never_lands(tmp_path):
     assert account["status"] == "error" and account["error"] == "child_exit_failure"
 
 
-def test_timeout_records_only_safe_code(tmp_path):
+@pytest.mark.parametrize("mode,error", [("timeout", "timeout"), ("failure", "child_exit_failure"), ("success", None)])
+def test_timeout_records_only_safe_code(tmp_path, mode, error):
+    """Every proposer exit cleans descendants and records only safe failure codes."""
     roots = _roots(tmp_path)
-    def timeout(*args):
-        raise subprocess.TimeoutExpired("secret-in-command", 1, stderr="secret-in-stderr")
-    with pytest.raises(spawn.RunnerError, match="timeout"):
-        spawn.run("window", "timeout-run", roots=roots, spawn_fn=timeout)
-    account = (layer.state_dir("project", roots["project"]) / "runs/timeout-run.json").read_text()
-    assert "secret" not in account and '"error": "timeout"' in account
-    assert on_session_start.last_run_summary(roots) == "autoharness last run: failed (timeout)"
-    assert on_session_start.last_run_summary(roots) is None
+    original_handler = signal.getsignal(signal.SIGTERM)
+    pids = tmp_path / "pids"
+    homes = []
+    code = """import os, pathlib, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+pathlib.Path(sys.argv[1]).write_text(f"{os.getpid()} {child.pid}")
+if sys.argv[2] == "timeout":
+    time.sleep(30)  # secret-in-command must not enter the run account
+pathlib.Path(sys.argv[3]).write_text('{"intents":[]}')
+sys.exit(1 if sys.argv[2] == "failure" else 0)
+"""
+    def timeout(argv, env, bundle):
+        """Run a real proposer stub that leaves a descendant behind at exit."""
+        homes.append(Path(env["CODEX_HOME"]))
+        output = argv[argv.index("--output-last-message") + 1]
+        return spawn._detached_spawn([sys.executable, "-c", code, str(pids), mode, output], env, bundle, timeout_s=1)
+    try:
+        if error:
+            with pytest.raises(spawn.RunnerError, match=error):
+                spawn.run("window", "timeout-run", roots=roots, spawn_fn=timeout)
+        else:
+            spawn.run("window", "timeout-run", roots=roots, spawn_fn=timeout)
+        account = (layer.state_dir("project", roots["project"]) / "runs/timeout-run.json").read_text()
+        assert "secret" not in account and json.loads(account).get("error") == error
+        if error:
+            assert on_session_start.last_run_summary(roots) == f"autoharness last run: failed ({error})"
+            assert on_session_start.last_run_summary(roots) is None
+        assert homes and not homes[0].exists()
+        assert signal.getsignal(signal.SIGTERM) == original_handler
+        for pid in map(int, pids.read_text().split()):
+            status = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True,
+                                    text=True, timeout=5).stdout.strip()
+            assert not status or status.startswith("Z"), f"proposer descendant {pid} survived: {status}"
+    finally:
+        if pids.exists():
+            for pid in map(int, pids.read_text().split()):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
+def test_terminated_worker_cleans_its_proposer(tmp_path):
+    """SIGTERM reaps the worker's proposer and removes its private Codex home."""
+    marker = tmp_path / "proposer-pid"
+    code = ("import json,os,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text("
+            "json.dumps({'pid':os.getpid(), 'home':os.environ['CODEX_HOME']})); time.sleep(30)")
+    worker_code = f"""import sys
+from pathlib import Path
+sys.path.insert(0, {str(Path(spawn.__file__).resolve().parents[2])!r})
+from codex_autoharness.hook import spawn
+def propose(argv, env, bundle):
+    return spawn._detached_spawn([sys.executable, '-c', {code!r}, {str(marker)!r}], env, bundle, timeout_s=30)
+spawn.run('window', 'terminated-run', roots={{'project':Path({str(tmp_path / 'project')!r}),
+          'global':Path({str(tmp_path / 'global')!r})}}, spawn_fn=propose,
+          source_home={str(tmp_path / 'original-codex-home')!r})
+"""
+    with subprocess.Popen([sys.executable, "-c", worker_code], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL) as worker:
+        try:
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert marker.exists(), "proposer did not start"
+            info = json.loads(marker.read_text())
+            worker.terminate()
+            worker.wait(timeout=5)
+            assert worker.returncode == 128 + signal.SIGTERM
+            assert not Path(info["home"]).exists()
+            status = subprocess.run(["ps", "-o", "stat=", "-p", str(info["pid"])], capture_output=True,
+                                    text=True, timeout=5).stdout.strip()
+            assert not status or status.startswith("Z"), f"proposer survived worker termination: {status}"
+        finally:
+            worker.kill()
+            if marker.exists():
+                try:
+                    os.kill(json.loads(marker.read_text())["pid"], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_schema_normalizes_subfiles_and_rejects_duplicates():
@@ -204,11 +280,19 @@ def test_snapshots_keep_at_most_five_and_failure_aborts(tmp_path, monkeypatch):
 
 
 def test_main_advances_offset_only_after_success(tmp_path, monkeypatch):
+    """Missing sources and failed reflections preserve the transcript watermark."""
     roots = _roots(tmp_path)
+    transcript = tmp_path / "transcript.jsonl"
+    counters.write_session_offset("session", 7, roots["project"])
+    argv = [str(transcript), "session", "run-offset", str(roots["project"]), str(roots["global"])]
+    with pytest.raises(spawn.RunnerError, match="capture_error"):
+        spawn.main(argv)
+    account = json.loads((layer.state_dir("project", roots["project"]) / "runs/run-offset.json").read_text())
+    assert account["error"] == "capture_error" and counters.session_offset("session", roots["project"]) == 7
+    transcript.touch()  # an existing empty source is a legitimate no-op
+    assert spawn.main(argv) == [] and counters.session_offset("session", roots["project"]) == 7
     monkeypatch.setattr(spawn.capture, "window", lambda *a: ("window", 42))
     monkeypatch.setattr(spawn.capture, "digest", lambda *a: "digest")
-    counters.write_session_offset("session", 7, roots["project"])
-    argv = ["/transcript.jsonl", "session", "run-offset", str(roots["project"]), str(roots["global"])]
     monkeypatch.setattr(spawn, "run", lambda *a, **k: (_ for _ in ()).throw(spawn.RunnerError("timeout")))
     with pytest.raises(spawn.RunnerError):
         spawn.main(argv)

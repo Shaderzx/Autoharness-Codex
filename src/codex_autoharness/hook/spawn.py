@@ -5,10 +5,12 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import tomllib
 from contextlib import ExitStack
 from pathlib import Path
@@ -311,9 +313,26 @@ def _isolated_home(directory, env, *, source_home=None, model_provider=None, rea
 
 def _detached_spawn(argv, env, bundle, *, timeout_s=None):
     """Run one bounded proposer process without forwarding its output."""
-    return subprocess.run(argv, input=bundle, text=True, env=env,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                          check=False, timeout=timeout_s or config.REFLECTOR_TIMEOUT_S)
+    def terminate(signum, frame):
+        """Unwind worker termination through private-home and process cleanup."""
+        raise SystemExit(128 + signum)  # unwind private-home and process cleanup on worker termination
+    previous = signal.signal(signal.SIGTERM, terminate) if threading.current_thread() is threading.main_thread() else None
+    try:
+        with subprocess.Popen(argv, stdin=subprocess.PIPE, text=True, env=env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              start_new_session=True) as child:
+            try:
+                child.communicate(bundle, timeout=timeout_s or config.REFLECTOR_TIMEOUT_S)
+            finally:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)  # descendants must not outlive any proposer exit
+                except ProcessLookupError:
+                    pass
+                child.wait()
+            return subprocess.CompletedProcess(argv, child.returncode)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
 
 
 def _unique_object(pairs):
@@ -558,13 +577,19 @@ def main(argv=None):
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         offset = counters.session_offset(session_id, roots[layer.PROJECT])
-        resolved_transcript = capture.resolve_transcript(transcript_path)
-        window_text, new_offset = capture.window(resolved_transcript, offset,
-                                                 **({"end_offset": args.end_offset} if args.end_offset is not None else {}))
+        try:
+            resolved_transcript = capture.resolve_transcript(transcript_path)
+            window_text, new_offset = capture.window(resolved_transcript, offset,
+                                                     **({"end_offset": args.end_offset} if args.end_offset is not None else {}))
+            if not window_text and not capture.resolve_transcript(resolved_transcript).is_file():
+                raise FileNotFoundError
+            digest = capture.digest(resolved_transcript, offset if new_offset >= offset else 0) if window_text else ""
+        except (OSError, ValueError) as exc:
+            _record_outcome(run_id, roots, "capture_error")
+            raise RunnerError("capture_error") from exc
         if not window_text:
             return []
-        result = run(window_text, run_id, roots=roots, session_id=session_id,
-                     digest=capture.digest(resolved_transcript, offset if new_offset >= offset else 0), **settings)
+        result = run(window_text, run_id, roots=roots, session_id=session_id, digest=digest, **settings)
         counters.write_session_offset(session_id, new_offset, roots[layer.PROJECT])
         return result
     finally:

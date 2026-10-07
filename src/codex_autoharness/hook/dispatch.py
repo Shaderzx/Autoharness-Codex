@@ -128,28 +128,40 @@ def _session_settings(event, root):
     return settings, end_offset
 
 
-def _detached_launch(transcript_path, session_id, run_id, roots, *, settings=None, end_offset=None):
+def _worker_launch(argv, run_id, roots):
+    """Detach a worker and persist a safe failure account if launch fails."""
     try:
         subprocess.Popen(  # host-detach: fire-and-forget so the Stop hook returns immediately
-            [sys.executable, "-m", "codex_autoharness.hook.spawn",
-             str(transcript_path), str(session_id), run_id,
-             str(roots[layer.PROJECT]), str(roots[layer.GLOBAL]),
-             *_job_arguments(settings, end_offset)],
+            argv,
             start_new_session=True, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             env=_worker_env(),
         )
     except OSError as exc:
+        from codex_autoharness.hook.spawn import _record_outcome
+        _record_outcome(run_id, roots, "worker_launch_failure")
         return {"error": f"detached_launch failed: {type(exc).__name__}: {exc}"}
     return None
 
 
+def _detached_launch(transcript_path, session_id, run_id, roots, *, settings=None, end_offset=None):
+    """Launch reflection with the triggering session's transcript and model settings."""
+    return _worker_launch(
+        [sys.executable, "-m", "codex_autoharness.hook.spawn",
+         str(transcript_path), str(session_id), run_id,
+         str(roots[layer.PROJECT]), str(roots[layer.GLOBAL]),
+         *_job_arguments(settings, end_offset)], run_id, roots)
+
+
 def _reflect(event, result, roots, launch=None):
-    transcript_path = event.get("transcript_path")
-    if not transcript_path:
-        return
+    """Launch a unique reflection or report a missing transcript path for retry."""
     # The activity count resets, so it cannot distinguish successive windows.
     run_id = f"{_run_id(result)}-{uuid.uuid4().hex[:12]}"
+    transcript_path = event.get("transcript_path")
+    if not transcript_path:
+        from codex_autoharness.hook.spawn import _record_outcome
+        _record_outcome(run_id, roots, "missing_transcript_path")
+        return {"error": "missing_transcript_path"}
     job = {}
     if event.get("_autoharness_model_settings"):
         job["settings"] = event["_autoharness_model_settings"]
@@ -159,13 +171,11 @@ def _reflect(event, result, roots, launch=None):
 
 
 def _consolidate_launch(run_id, roots, *, settings=None):
-    subprocess.Popen(  # host-detach: same fire-and-forget as reflection; the curator reads the library, not the transcript
+    """Launch a curator using the current managed library and session model settings."""
+    return _worker_launch(
         [sys.executable, "-m", "codex_autoharness.hook.spawn", "--curate", run_id,
          str(roots[layer.PROJECT]), str(roots[layer.GLOBAL]), *_job_arguments(settings)],
-        start_new_session=True, stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=_worker_env(),
-    )
+        run_id, roots)
 
 
 def _prompt(event, roots):
@@ -201,6 +211,7 @@ def _activity(event, root):
 
 
 def _curation_count(root):
+    """Return eligible tool activity without advancing the successful-launch watermark."""
     threshold = config.CONSOLIDATE_EVERY_N
     if threshold <= 0:
         return None
@@ -209,11 +220,11 @@ def _curation_count(root):
         watermark = layer.checked_path(root, "codex-autoharness", "last_curated_tool_count")
         if count - counters._read_int(watermark) < threshold:
             return None
-        atomic.write_text(watermark, str(count))
         return count
 
 
 def dispatch(event, *, roots=None, reflect=None, consolidate=None):
+    """Route host hooks while preserving failed launch activity and child isolation."""
     if not isinstance(event, dict):
         return {"ignored": True, "reason": "malformed hook input"}
     name = event.get("hook_event_name")
@@ -240,21 +251,31 @@ def dispatch(event, *, roots=None, reflect=None, consolidate=None):
         if name == "UserPromptSubmit":
             result = _prompt(event, roots)
             return {"handled": name, "result": result}
-        if name == "Stop":
-            promoter.drain(config.INTERACTIVE_RUN_ID, roots=roots)  # /learn and other in-session proposals; no-op when empty
-            result = on_stop.on_stop(event, root=proot)
+        if name in {"Stop", "SessionEnd"}:
+            if name == "Stop":
+                promoter.drain(config.INTERACTIVE_RUN_ID, roots=roots)  # /learn; no-op when empty
+            handler = on_stop.on_stop if name == "Stop" else on_session_end.on_session_end
+            result = handler(event, root=proot)
             if result.get("triggered"):
-                fire(event, result, roots)
-            curation_count = _curation_count(proot)
-            if curation_count is not None:
-                settings = event.get("_autoharness_model_settings")
-                curate(_curate_run_id(event, curation_count), roots,
-                       **({"settings": settings} if settings else {}))
-            return {"handled": name, "result": result}
-        if name == "SessionEnd":
-            result = on_session_end.on_session_end(event, root=proot)
-            if result.get("triggered"):
-                fire(event, result, roots)
+                try:
+                    launched = fire(event, result, roots)
+                    if isinstance(launched, dict) and launched.get("error"):
+                        raise RuntimeError(launched["error"])
+                except Exception:
+                    # Add back consumed activity without overwriting newer tool calls.
+                    counters._bump(counters._session_path(result["session_id"], proot), result["count"])
+                    raise
+            if name == "Stop":
+                with lock_roots(roots):
+                    curation_count = _curation_count(proot)
+                    if curation_count is not None:
+                        settings = event.get("_autoharness_model_settings")
+                        launched = curate(_curate_run_id(event, curation_count), roots,
+                                          **({"settings": settings} if settings else {}))
+                        if isinstance(launched, dict) and launched.get("error"):
+                            raise RuntimeError(launched["error"])
+                        atomic.write_text(layer.checked_path(proot, "codex-autoharness", "last_curated_tool_count"),
+                                          str(curation_count))
             return {"handled": name, "result": result}
         if name == "PreToolUse":
             _activity(event, proot)
