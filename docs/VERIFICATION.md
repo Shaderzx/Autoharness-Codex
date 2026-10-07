@@ -24,6 +24,30 @@ and rejection of evidence available only in prior history. The full suite passed
 messages and a loopback provider. They do not measure provider-side caching,
 learning quality, or compatibility with other Codex versions.
 
+After merging the snapshot-recovery, Claude-import and test-consolidation changes
+from `main`, the retained suite passed **290 tests**, Ruff passed for `src`,
+`tests` and `tools`, and `git diff --check` passed. Removed redundant tests were
+kept removed; the learner-session tests extend the retained baseline.
+
+## Test suite cleanup
+
+Verified on 2026-10-07: **243 passed**, no failures or skips; Ruff passed.
+The baseline was 574 tests in 42 modules. The retained suite has 24 modules and
+3,543 Python lines, down from 6,359. Runtime code is unchanged.
+
+Removed duplicate helper/hook/dispatcher checks, assertions about constants or
+documentation wording, and a regex test that reimplemented production logic.
+Retained the CLI and native Codex flows, proposer isolation, concurrent workers,
+interrupted-write recovery, ownership and path checks, redaction, and snapshot
+recovery including directory permissions. Remaining content, staging, configuration,
+and metrics checks share fewer setups.
+
+For comparison, statement coverage measured in the pytest process changed from
+90.2% to 88.6%, and branch coverage from 83.9% to 80.4%. These measurements exclude
+subprocess execution; they are not proof of equivalent assertion coverage.
+Coverage was run through an ephemeral `uvx` environment, with no new project
+dependencies or test harness.
+
 ## 0.1.1 — session model inheritance
 
 Verified on 2026-10-07 with Codex CLI 0.160.1. Background learners and curators

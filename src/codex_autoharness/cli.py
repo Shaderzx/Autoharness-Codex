@@ -7,18 +7,19 @@ from pathlib import Path
 
 from codex_autoharness import __version__, integration
 from codex_autoharness.hook import on_session_start, promoter
-from codex_autoharness.lib import layer, ledger, sidecar, skill_store
+from codex_autoharness.lib import layer, ledger, sidecar, skill_import, skill_store
 from codex_autoharness.stage_skill import server
 
 
 def parser():
-    """Define maintenance commands and their explicit scope options."""
+    """Define maintenance commands and global options for selecting isolated roots."""
     p = argparse.ArgumentParser(prog="codex-autoharness", description="Learn, curate and recall native Codex skills from real sessions.")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--project", type=Path, help="Project directory (defaults to the current project); install uses global scope unless supplied")
     p.add_argument("--home", type=Path, help="Explicit home directory for an isolated installation and global layer")
     commands = p.add_subparsers(dest="command", required=True)
     for name, help_text in (("install", "Install six native hooks and $codex-learn; trust them in /hooks"),
+                            ("import-skills", "Copy existing global and project Claude skills without overwriting Codex skills"),
                             ("uninstall", "Remove installer-owned hooks and helper; retain learned skills"),
                             ("status", "Show managed skills, roots and pending proposals"),
                             ("doctor", "Check Python, Codex and installation; explain hook trust"),
@@ -38,6 +39,8 @@ def parser():
         cmd = commands.add_parser(name, help=f"{name.title()} one managed skill; preserve user-authored skills")
         cmd.add_argument("name")
         cmd.add_argument("--level", choices=layer.LAYERS, default=layer.PROJECT)
+        if name == "restore":
+            cmd.add_argument("--snapshot", type=Path, help="Recover this skill from a pre-curation .tar.gz snapshot")
     history = commands.add_parser("history", help="Show run accounts or one managed skill's ledger")
     history.add_argument("name", nargs="?")
     history.add_argument("--level", choices=layer.LAYERS, default=layer.PROJECT)
@@ -73,6 +76,8 @@ def _archive_restore(args, roots):
         if not sidecar.is_agent_created(args.level, args.name, root):
             raise ValueError("Only managed skills can be archived")
         dest = skill_store.archive(args.level, args.name, root)
+    elif args.snapshot:
+        dest = skill_store.restore_snapshot(args.level, args.name, args.snapshot, root)
     else:
         layer._check_name(args.name)
         archived = layer.archive_dir(args.level, root) / args.name
@@ -83,7 +88,7 @@ def _archive_restore(args, roots):
 
 
 def main(argv=None):
-    """Dispatch a maintenance command through the trusted host pipeline."""
+    """Dispatch a CLI command and return its exit status after reporting structured results."""
     args = parser().parse_args(argv)
     roots = integration.roots(project=args.project, home=args.home)
     if hasattr(args, "level"):
@@ -106,6 +111,10 @@ def main(argv=None):
             return dispatch.main()
         if args.command in ("install", "uninstall", "status", "doctor"):
             return _emit(getattr(integration, args.command)(project=args.project, home=args.home))
+        if args.command == "import-skills":
+            imported = skill_import.import_skills(roots)
+            ok = all(reason == "destination exists" for result in imported.values() for reason in result["skipped"].values())
+            return _emit({"ok": ok, "layers": imported})
         if args.command == "index":
             print(on_session_start.recall_index(roots, cwd=str(args.project or Path.cwd())) or "No managed skills yet.")
             return 0

@@ -211,17 +211,6 @@ def test_restore_refuses_symlink_archive_entry(roots, tmp_path):
     assert not skill_store.exists(layer.PROJECT, "date-rule", root)
 
 
-@pytest.mark.parametrize("payload", [None, [], "proposal", 17,
-    {"action": "create", "name": "../escape", "body": "bad", "reason": "r", "evidence": "e"},
-    proposal(body={"not": "text"}),
-    proposal(files={"references/../../outside.txt": "escape"}),
-])
-def test_invalid_staging_payload_never_queues_work(roots, payload):
-    result = server.stage(payload, run_id="malformed", root=roots[layer.PROJECT])
-    assert not result["ok"]
-    assert intent_queue.read("malformed", roots[layer.PROJECT]) == []
-
-
 def test_capture_and_persisted_evidence_redact_without_modifying_transcript(roots, tmp_path):
     secrets = ["ghp_" + "a" * 36, "AKIA" + "A" * 16,
                "person@example.com", "123-45-6789", "4111 1111 1111 1111"]

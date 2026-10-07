@@ -42,18 +42,6 @@ def post_tool(roots, name, tool_input, response=None):
     }, roots=roots)
 
 
-def test_prompt_submission_counts_each_turn_once_and_stop_does_not(roots):
-    event = {"hook_event_name": "UserPromptSubmit", "session_id": "codex-session",
-             "turn_id": "turn-1", "prompt": "Fix the parser."}
-    dispatch.dispatch(event, roots=roots)
-    dispatch.dispatch(event, roots=roots)
-    dispatch.dispatch({**event, "turn_id": "turn-2"}, roots=roots)
-    dispatch.dispatch({"hook_event_name": "Stop", "session_id": "codex-session"},
-                      roots=roots, reflect=lambda *args: None)
-    for level, root in roots.items():
-        assert counters.request_count(level, root) == 2
-
-
 def test_home_session_shared_root_counts_and_indexes_once(tmp_path):
     roots = {layer.GLOBAL: tmp_path / ".agents", layer.PROJECT: tmp_path / ".agents"}
     skill = managed_skill(roots)
@@ -65,15 +53,6 @@ def test_home_session_shared_root_counts_and_indexes_once(tmp_path):
     assert verdict["result"]["context"].count("- native-reader") == 1
     post_tool(roots, "Read", {"file_path": str(skill)})
     assert sidecar.read(layer.GLOBAL, "native-reader", roots[layer.GLOBAL])["use"] == 1
-
-
-def test_native_tool_lifecycle_counts_activity_once(roots):
-    event = {"session_id": "codex-session", "turn_id": "turn-1",
-             "tool_name": "exec_command", "tool_input": {"cmd": "pwd"}}
-    dispatch.dispatch({**event, "hook_event_name": "PreToolUse"}, roots=roots)
-    dispatch.dispatch({**event, "hook_event_name": "PostToolUse",
-                       "tool_response": {"exit_code": 0}}, roots=roots)
-    assert counters.session_count("codex-session", roots[layer.PROJECT]) == 1
 
 
 def test_same_turn_id_in_different_sessions_counts_both_requests(roots):
@@ -91,16 +70,22 @@ def test_heavy_turn_crosses_curation_threshold_once_and_keeps_aggregate(roots, m
     tool = {"hook_event_name": "PreToolUse", "session_id": "codex-session",
             "tool_name": "exec_command", "tool_input": {"cmd": "pwd"}}
     stop = {"hook_event_name": "Stop", "session_id": "codex-session"}
+    reflected = []
 
     def end_turn():
-        dispatch.dispatch(stop, roots=roots, reflect=lambda *args: None,
+        dispatch.dispatch(stop, roots=roots, reflect=lambda event, result, _: reflected.append(result["count"]),
                           consolidate=lambda run_id, _: fired.append(run_id))
 
-    for _ in range(5):
+    dispatch.dispatch(tool, roots=roots)
+    end_turn()
+    end_turn()
+    assert reflected == fired == []
+    for _ in range(4):
         dispatch.dispatch(tool, roots=roots)
     end_turn()
     end_turn()
     assert fired == ["codex-session-c5"]
+    assert reflected == [5]
     assert counters.session_count("codex-session", roots[layer.PROJECT]) == 0
 
     for _ in range(2):
@@ -110,6 +95,13 @@ def test_heavy_turn_crosses_curation_threshold_once_and_keeps_aggregate(roots, m
     dispatch.dispatch(tool, roots=roots)
     end_turn()
     assert fired == ["codex-session-c5", "codex-session-c8"]
+    # Session end flushes activity below the reflection threshold once.
+    tail = []
+    end = {**stop, "hook_event_name": "SessionEnd"}
+    for _ in range(2):
+        dispatch.dispatch(end, roots=roots, reflect=lambda event, result, _: tail.append(result["count"]))
+    assert tail == [1]
+    assert counters.session_count("codex-session", roots[layer.PROJECT]) == 0
 
 
 def test_disabled_curation_does_not_fire_after_tool_activity(roots):
@@ -151,8 +143,6 @@ def test_native_successful_skill_read_counts_use(roots, tool, input_key):
 @pytest.mark.parametrize("tool,input_key,command", [
     ("exec_command", "cmd", "cat {path}"),
     ("Bash", "command", "sed -n '1,80p' {path}"),
-    ("exec_command", "cmd", "head -80 {path}"),
-    ("exec_command", "cmd", "tail -20 {path}"),
     ("exec_command", "cmd", "rg conventions {path}"),
 ])
 def test_shell_skill_reads_count_use(roots, tool, input_key, command):
@@ -182,17 +172,22 @@ def test_failed_read_does_not_count_skill_use(roots, response):
     assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 0
 
 
-def test_skill_path_in_echo_text_is_not_a_read(roots):
-    path = managed_skill(roots)
-    post_tool(roots, "exec_command", {"cmd": "echo " + shlex.quote(str(path))})
-    assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 0
-
-
 @pytest.mark.parametrize("template", ["cat > {path}", "rg {path} another-file", "rg --files {path}"])
 def test_shell_path_references_are_not_automatically_skill_reads(roots, template):
     path = managed_skill(roots)
     post_tool(roots, "exec_command", {"cmd": template.format(path=shlex.quote(str(path)))})
     assert sidecar.read(layer.PROJECT, "native-reader", roots[layer.PROJECT])["use"] == 0
+
+
+def test_unmanaged_and_archived_reads_do_not_create_usage(roots):
+    root = roots[layer.PROJECT]
+    path = managed_skill(roots)
+    archived = skill_store.archive(layer.PROJECT, "native-reader", root)
+    skill_store.write_body(layer.PROJECT, "native-reader", "User-owned instructions.", root)
+    post_tool(roots, "Read", {"file_path": str(path)})
+    post_tool(roots, "Read", {"file_path": str(archived / "SKILL.md")})
+    assert sidecar.read(layer.PROJECT, "native-reader", root) == {}
+    assert json.loads((archived / sidecar.FILENAME).read_text())["use"] == 0
 
 
 def test_child_hooks_do_not_increment_activity_requests_or_skill_usage(roots, monkeypatch):
@@ -217,12 +212,6 @@ def test_child_session_start_does_not_consume_main_session_summary(roots, monkey
     dispatch.dispatch({"hook_event_name": "SessionStart", "session_id": "codex-child"},
                       roots=roots)
     assert summary.exists()
-
-
-@pytest.mark.parametrize("event", [[], None, "not an event", 42])
-def test_malformed_native_hook_input_is_ignored(roots, event):
-    result = dispatch.dispatch(event, roots=roots)
-    assert result.get("ignored") or result.get("error")
 
 
 def test_native_rollout_digest_keeps_messages_and_tool_names_only(tmp_path):

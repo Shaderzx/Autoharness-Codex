@@ -9,7 +9,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from codex_autoharness.lib import atomic, layer, sidecar
+from codex_autoharness.lib import atomic, layer, sidecar, skill_import
 
 EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd")
 SKILL_NAME = "codex-learn"
@@ -81,6 +81,7 @@ def _skill_text(command):
 
 
 def install(*, project=None, home=None):
+    """Install owned hooks and the learning helper, then import Claude skills for that scope."""
     hooks_path, install_dir, skill_dir = _paths(project, home)
     manifest_path = install_dir / "install.json"
     previous = _read_json(manifest_path, {})
@@ -122,7 +123,10 @@ def install(*, project=None, home=None):
                 "launcher_sha256": _digest(launcher_text), "hooks_sha256": _digest(rendered),
                 "original_hooks": previous.get("original_hooks", original)}
     atomic.write_text(manifest_path, json.dumps(manifest, indent=2) + "\n")
+    level = layer.PROJECT if project else layer.GLOBAL
+    imported = skill_import.import_layer(level, skill_dir.parent.parent)
     return {"ok": True, "hooks": str(hooks_path), "skill": str(skill_path), "launcher": str(launcher),
+            "skill_import": imported,
             "trust_required": True, "next_step": "Restart Codex, open /hooks, review and trust the changed hooks source, including its preexisting hooks. Hook trust is never bypassed."}
 
 

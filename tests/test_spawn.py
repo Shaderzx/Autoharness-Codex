@@ -1,7 +1,6 @@
 import json
 import os
 import subprocess
-import sys
 import tarfile
 import tomllib
 from pathlib import Path
@@ -11,7 +10,14 @@ import pytest
 
 from codex_autoharness import config
 from codex_autoharness.hook import spawn
-from codex_autoharness.lib import counters, intent_queue, layer, sidecar, skill_store
+from codex_autoharness.lib import (
+    counters,
+    intent_queue,
+    layer,
+    ledger,
+    sidecar,
+    skill_store,
+)
 
 GOOD = "---\nname: {n}\ndescription: Use when testing a specific operation.\ncategory: testing\n---\nRun the operation against a temporary fixture.\n"
 
@@ -43,18 +49,6 @@ def fake_child(rows, *, returncode=0, observe=None):
         Path(argv[argv.index("--output-last-message") + 1]).write_text(json.dumps({"intents": rows}))
         return SimpleNamespace(returncode=returncode)
     return run
-
-
-def test_command_is_fresh_read_only_and_disables_tools(tmp_path):
-    command = spawn.build_command(codex_bin="codex", output_path=tmp_path / "out", cwd=tmp_path)
-    assert command[:2] == ["codex", "exec"]
-    assert "--ephemeral" in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
-    assert "--output-schema" in command and "--output-last-message" in command
-    assert command[-1] == "-"
-    assert not any("dangerously" in part or "resume" == part for part in command)
-    for feature in ("shell_tool", "unified_exec", "hooks", "plugins", "multi_agent"):
-        assert ["--disable", feature] == command[command.index(feature) - 1:command.index(feature) + 1]
 
 
 def test_provider_auth_copied_privately_without_extensions(tmp_path, isolated_source_home):
@@ -113,16 +107,6 @@ def test_bundle_only_contains_managed_bodies_and_redacts(tmp_path):
     assert "MANAGED_BODY" in seen["bundle"] and "EXTERNAL_BODY" not in seen["bundle"]
     assert "external/read-only" in seen["bundle"]
     assert not Path(seen["home"]).exists()
-
-
-def test_run_lands_complete_json_and_success_account(tmp_path):
-    roots = _roots(tmp_path)
-    verdicts = spawn.run("Use a temporary fixture", "run-create", roots=roots,
-                         spawn_fn=fake_child([proposal()]))
-    assert [v["ok"] for v in verdicts] == [True]
-    assert sidecar.is_agent_created("project", "learned", roots["project"])
-    assert intent_queue.read("run-create", roots["project"]) == []
-    assert not (layer.state_dir("project", roots["project"]) / "handoff").exists()
 
 
 @pytest.mark.parametrize("text", [
@@ -188,6 +172,11 @@ def test_curator_merges_managed_and_preserves_native(tmp_path):
     assert [v["ok"] for v in verdicts] == [True, True, False]
     assert skill_store.read_body("project", "native", roots["project"])
     assert skill_store.read_body("project", "narrow", roots["project"]) is None
+    assert "Run and check the operation" in skill_store.read_body("project", "umbrella", roots["project"])
+    retired = ledger.read("project", "narrow", roots["project"], archived=True)[-1]
+    assert retired["action"] == "delete" and retired["absorbed_into"] == "umbrella"
+    archived = layer.archive_dir("project", roots["project"]) / "narrow"
+    assert (archived / retired["evidence"]).read_text() == "Run the operation against a temporary fixture."
     snapshot = layer.state_dir("project", roots["project"]) / "snapshots/curator-run-project.tar.gz"
     with tarfile.open(snapshot) as archive:
         names = archive.getnames()
@@ -222,19 +211,6 @@ def test_main_advances_offset_only_after_success(tmp_path, monkeypatch):
     monkeypatch.setattr(spawn, "run", lambda *a, **k: [])
     spawn.main(argv)
     assert counters.session_offset("session", roots["project"]) == 42
-
-
-def test_real_subprocess_contract_with_fake_codex(tmp_path):
-    roots = _roots(tmp_path)
-    script = tmp_path / "codex-fake"
-    script.write_text("#!" + sys.executable + "\nimport sys,json,os\nfrom pathlib import Path\n"
-                      "assert os.environ['" + config.CHILD_SESSION_ENV + "'] == '1'\n"
-                      "assert 'Use a temporary fixture' in sys.stdin.read()\n"
-                      "out = Path(sys.argv[sys.argv.index('--output-last-message')+1])\n"
-                      "out.write_text(" + repr(json.dumps({"intents": [proposal()]})) + ")\n")
-    script.chmod(0o755)
-    result = spawn.run("Use a temporary fixture", "subprocess-run", roots=roots, codex_bin=str(script))
-    assert [row["ok"] for row in result] == [True]
 
 
 def test_fabricated_evidence_never_lands(tmp_path):

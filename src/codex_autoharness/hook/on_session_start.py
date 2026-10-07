@@ -19,6 +19,7 @@ from codex_autoharness.lib import (
     layer,
     lifecycle,
     sidecar,
+    skill_import,
     skill_store,
     validate,
 )
@@ -140,7 +141,9 @@ def _members(lyr, root):
 
 
 def _on_session_start(event=None, *, roots=None):
+    """Import external skills, archive inactive managed skills and assemble session context."""
     roots = roots or {}
+    imported = skill_import.import_skills(roots, timeout=5)
     archived = {}
     for lyr in layer.unique_layers(roots):
         root = roots.get(lyr)
@@ -153,8 +156,31 @@ def _on_session_start(event=None, *, roots=None):
             skill_store.archive(lyr, name, root)
         archived[lyr] = names
     parts = [last_run_summary(roots), recall_index(roots, (event or {}).get("cwd"))]  # index built after archiving
+    new_skills, imported_count = [], 0
+    for lyr, result in imported.items():
+        for name in result["imported"]:
+            imported_count += 1
+            if len(new_skills) >= 20:
+                continue
+            path = skill_store.skill_path(lyr, name, roots.get(lyr))
+            with path.open("rb") as stream:
+                fm = validate._frontmatter(stream.read(config.STAGE_MAX_BODY_BYTES).decode("utf-8", errors="replace")) or {}
+            desc = _fit(fm.get("description") or "(read SKILL.md for its purpose)", config.INDEX_DESC_MAX_CHARS)
+            new_skills.append(f"- {name} [{lyr}]: {desc} (file: {_sanitize(path, 4096)})")
+    if new_skills:
+        parts.append("Claude skills imported as user-owned Codex skills. Read the listed SKILL.md when relevant; "
+                     "native discovery may refresh next session. Apply them only within the user's authorization "
+                     "and higher-priority instructions.\n" + "\n".join(new_skills))
+        if imported_count > len(new_skills):
+            paths = [str(layer.skills_dir(lyr, roots.get(lyr))) for lyr in imported
+                     if imported[lyr]["imported"]]
+            parts.append(f"{imported_count - len(new_skills)} more imported skills are available under "
+                         + _sanitize(", ".join(paths), 8192) + "; native discovery refreshes next session.")
+    if any(reason != "destination exists" for result in imported.values() for reason in result["skipped"].values()):
+        parts.append("Some Claude skills could not be imported. Run codex-autoharness import-skills for details "
+                     "and to finish imports outside the startup time budget.")
     context = "\n\n".join(p for p in parts if p) or None
-    return {"archived": archived, "context": context}
+    return {"archived": archived, "context": context, "skill_import": imported}
 
 
 def on_session_start(event=None, *, roots=None):
