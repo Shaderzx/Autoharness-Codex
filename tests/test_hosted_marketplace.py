@@ -62,9 +62,10 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
         return git("rev-parse", "HEAD")
 
     @contextmanager
-    def native():
+    def native(fixture_home=home):
         """Yield an initialized app-server RPC client and close its fixture process."""
-        process = subprocess.Popen(["codex", "app-server", "--stdio"], cwd=work, env=env, text=True,
+        process = subprocess.Popen(["codex", "app-server", "--stdio"], cwd=work,
+                                   env={**env, "CODEX_HOME": str(fixture_home)}, text=True,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         messages = queue.Queue()
 
@@ -153,6 +154,17 @@ def test_native_git_marketplace_updates_and_preserves_commit_pins(tmp_path):
     pinned.mkdir()
     codex("plugin", "marketplace", "add", SOURCE, "--ref", first_revision, fixture_home=pinned)
     pinned_cache = Path(codex("plugin", "add", integration.PLUGIN_ID, fixture_home=pinned)["installedPath"])
+    with native(fixture_home=pinned) as rpc:
+        rpc(2, "thread/start", {"cwd": str(work)})
+        # The metadata reaches the plugin cache only after startup refresh completes.
+        refreshed = pinned_cache / ".codex-marketplace-install.json"
+        deadline = time.monotonic() + 10
+        while not refreshed.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert refreshed.exists(), "Pinned marketplace startup refresh did not complete"
+        assert json.loads(refreshed.read_text())["revision"] == first_revision
+        assert (pinned_cache / "skills/probe/SKILL.md").read_text() == files["skills/probe/SKILL.md"]
+        assert tomllib.loads((pinned / "config.toml").read_text())["marketplaces"][MARKETPLACE]["ref"] == first_revision
     codex("plugin", "marketplace", "upgrade", MARKETPLACE, fixture_home=pinned)
     assert "first" in (pinned_cache / "skills/probe/SKILL.md").read_text()
     assert tomllib.loads((pinned / "config.toml").read_text())["marketplaces"][MARKETPLACE]["ref"] == first_revision

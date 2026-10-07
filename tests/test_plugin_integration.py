@@ -27,6 +27,8 @@ def test_status_distinguishes_cached_and_enabled_plugin(tmp_path):
 
 
 def test_plugin_marketplace_and_manifest_reference_real_resources():
+    from codex_autoharness.integration import _skill_text
+
     manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
     marketplace = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())
     entry = marketplace["plugins"][0]
@@ -34,6 +36,9 @@ def test_plugin_marketplace_and_manifest_reference_real_resources():
     assert entry["source"] == {"source": "local", "path": "./"}
     assert (ROOT / manifest["hooks"]).is_file()
     assert (ROOT / manifest["skills"] / "learn" / "SKILL.md").is_file()
+    helper = (ROOT / manifest["skills"] / "learn" / "SKILL.md").read_text()
+    instruction = next(line for line in helper.splitlines() if line.startswith("Run every `codex-autoharness`"))
+    assert _skill_text("codex-autoharness") == helper.replace(instruction + "\n\n", "")
 
 
 def test_plugin_hook_and_learn_launcher_work_without_installation(tmp_path):

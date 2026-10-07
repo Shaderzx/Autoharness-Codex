@@ -116,12 +116,14 @@ The transcript command runs synchronously and inherits the last model context re
 | `status` | Shows installation paths, managed skills, archives, and pending proposal queues. |
 | `doctor` | Checks the interpreter and Codex executable and explains the separate hook trust step. |
 | `index` | Prints the grouped index of managed project and global skills. |
+| `import-skills` | Copies global and project Claude skills into Codex discovery paths, preserving existing destinations. |
 | `learn --transcript FILE` | Distills the explicitly supplied Codex transcript. |
 | `curate` | Runs library consolidation now, with a snapshot before changes. |
 | `history` | Shows recent run results, including accepted and rejected proposals. |
 | `history NAME --level project` | Shows a managed skill's provenance ledger. |
 | `archive NAME --level project` | Moves a managed skill out of active recall. |
 | `restore NAME --level project` | Restores an archived managed skill, unless its live name is occupied. |
+| `restore NAME --snapshot FILE --level project` | Recovers one managed skill from a pre-curation snapshot, unless its live name is occupied. |
 | `spec` | Prints the authoring and validation contract. |
 | `stage --file FILE` | Validates and applies one JSON proposal immediately. |
 | `stage --file FILE --queue-only` | Queues the proposal for the next Stop hook. |
@@ -135,7 +137,7 @@ Global options `--project` and `--home` go before the subcommand. Skill commands
 
 | Codex event | AutoHarness action |
 |---|---|
-| `SessionStart` | Applies lifecycle decisions, injects a grouped skill index, and reports the previous run's outcome. |
+| `SessionStart` | Imports missing Claude skills, applies lifecycle decisions, injects a grouped skill index, and reports the previous run's outcome. |
 | `UserPromptSubmit` | Counts a request as an opportunity for skills to be used. |
 | `PreToolUse` | Counts main-session tool calls toward reflection and curation. |
 | `PostToolUse` | Records successful reads of managed `SKILL.md` files as loads and reads of support files as views. |
@@ -158,9 +160,19 @@ Credentials stored only in an OS keyring are not migrated into the isolated prop
 
 Each managed skill carries ownership metadata and an append-only provenance ledger. The library index and lifecycle pass only manage those skills. Your other skills can supply context for duplicate detection but are not eligible for automatic modification. A create proposal cannot replace an existing directory.
 
+Existing `~/.claude/skills/` and `<project>/.claude/skills/` are imported automatically at `SessionStart`; direct installation also imports its installed scope. `import-skills` runs both scopes before starting Codex, using the selected `--home` and `--project`. Each new skill directory is copied with support files and executable permissions, while Claude originals remain unchanged. Existing Codex destinations are skipped, even empty directories. Symlinks, special files and unsafe skill names are rejected; the command reports imported and skipped names. Ownership metadata and host accounting files are excluded, so imported skills remain user-owned and survive uninstall and automatic cleanup.
+
+New imports receive a bounded file index in that session's hook context because Codex may already have loaded its native skill catalog. Startup imports share a five-second copying budget; use `import-skills` to finish a large library outside the hook timeout. Complete copies are published atomically without replacing existing paths on macOS and Linux; interrupted staging is cleaned on retry. Restart Codex to refresh native discovery. Importing copies files; it does not translate Claude-specific tool names, instructions or absolute paths, and later source edits do not overwrite the Codex copy.
+
 By default the project layer follows the session's working directory. Linked Git worktrees resolve to the main worktree so their learned skills survive worktree removal. Start Codex at the project root, or pass an explicit `--project`, when you want all work in one project library.
 
-The state directory includes request and tool-call counters, transcript offsets, `intents/`, `runs/`, `last_run.json`, and curator `snapshots/`. Snapshots include managed skills only; both layers' snapshots are stored under the project's state directory. Curation stops if a required snapshot cannot be created. Review history before changing a lesson. `archive` and `restore` are the ordinary recovery commands; snapshots are a separate recovery source for a curator run and require selective manual recovery. A snapshot is not a reason to overwrite unrelated current skills.
+The state directory includes request and tool-call counters, transcript offsets, `intents/`, `runs/`, `last_run.json`, and curator `snapshots/`. Snapshots include managed skills only; both layers' snapshots are stored under the project's state directory. Curation stops if a required snapshot cannot be created. Review history before changing a lesson. Use `restore NAME --snapshot FILE --level project` to recover one skill, including its metadata, ledger, and support files. For example:
+
+```sh
+codex-autoharness restore my-skill --snapshot .agents/codex-autoharness/snapshots/RUN-project.tar.gz
+```
+
+Choose the snapshot file for the intended layer; use `--level global` for global recovery. If the live name is occupied, first run `archive NAME --level project` to preserve the current managed version. Recovery refuses all occupied names, including unmanaged skills, and leaves unrelated skills and the snapshot unchanged. It rejects links and unsafe paths and limits each recovered skill to 10 MB and 1,000 archive entries. Ordinary `restore` without `--snapshot` still revives an archived skill.
 
 ## Configuration
 

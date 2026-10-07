@@ -19,7 +19,8 @@ repository, with an origin rewrite confined to its child environment. It verifie
   remain unchanged until the user reviews the source.
 - Explicit upgrade is a no-op at the current revision and activates a new
   plugin version when the remote manifest version changes.
-- A full commit SHA remains pinned through explicit upgrades.
+- A full commit SHA remains pinned through automatic startup refresh and
+  explicit upgrades.
 
 Run `python3 -m pytest -q tests/test_hosted_marketplace.py`. The marketplace
 fixture needs no network access, model provider, or user credentials. The test
@@ -27,6 +28,25 @@ skips if Codex is absent.
 Automatic updates are provided by Codex's existing
 [plugin startup task](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/core-plugins/src/manager.rs#L2812).
 There is no custom updater, release scheduler, or public plugin directory listing.
+
+## Test suite cleanup
+
+Verified on 2026-10-07: **243 passed**, no failures or skips; Ruff passed.
+The baseline was 574 tests in 42 modules. The retained suite has 24 modules and
+3,543 Python lines, down from 6,359. Runtime code is unchanged.
+
+Removed duplicate helper/hook/dispatcher checks, assertions about constants or
+documentation wording, and a regex test that reimplemented production logic.
+Retained the CLI and native Codex flows, proposer isolation, concurrent workers,
+interrupted-write recovery, ownership and path checks, redaction, and snapshot
+recovery including directory permissions. Remaining content, staging, configuration,
+and metrics checks share fewer setups.
+
+For comparison, statement coverage measured in the pytest process changed from
+90.2% to 88.6%, and branch coverage from 83.9% to 80.4%. These measurements exclude
+subprocess execution; they are not proof of equivalent assertion coverage.
+Coverage was run through an ephemeral `uvx` environment, with no new project
+dependencies or test harness.
 
 ## 0.1.1 — session model inheritance
 
