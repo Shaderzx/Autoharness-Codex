@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intents": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {"type": "string", "enum": ["create", "update", "patch", "remove_file", "delete"]},
+          "name": {"type": "string"},
+          "level": {"type": ["string", "null"], "enum": ["project", "global", null]},
+          "body": {"type": ["string", "null"]},
+          "old_string": {"type": ["string", "null"]},
+          "new_string": {"type": ["string", "null"]},
+          "reason": {"type": "string"},
+          "evidence": {"type": "string"},
+          "files": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+              "required": ["path", "content"]
+            }
+          },
+          "path": {"type": ["string", "null"]},
+          "absorbed_into": {"type": ["string", "null"]}
+        },
+        "required": ["action", "name", "level", "body", "old_string", "new_string", "reason", "evidence", "files", "path", "absorbed_into"]
+      }
+    }
+  },
+  "required": ["intents"]
+}

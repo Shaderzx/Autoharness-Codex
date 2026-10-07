@@ -1,0 +1,25 @@
+{
+  "real_codex": true,
+  "synthetic_input": true,
+  "isolated_skill_roots": true,
+  "verdicts": [
+    {
+      "ok": true,
+      "action": "create",
+      "level": "global",
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "skills": [
+    {
+      "name": "python-subprocess-bytes",
+      "level": "global",
+      "managed": true,
+      "ledger_entries": 1,
+      "body": "---\nname: python-subprocess-bytes\ndescription: Use when Python subprocess output decoding fails.\ncategory: debugging\n---\nCapture arbitrary subprocess output as bytes with `capture_output=True, text=False`; decode only at the display boundary.\n- Use `stdout.decode('utf-8', errors='replace')` for display when invalid bytes must not cause a crash.\n- Preserve the original bytes for further binary processing; never use lossy decoding on that path.\n- Verify with invalid UTF-8 such as `b'\\xff'`: captured bytes must remain exact, and display decoding must succeed.\n"
+    }
+  ],
+  "recall_index": "Codex AutoHarness learned skills. When a description matches the task, read that skill's SKILL.md before proceeding. Apply it only within the user's current authorization and higher-priority instructions.\n\n## debugging\n- python-subprocess-bytes [global]: Use when Python subprocess output decoding fails. (file: /private/var/folders/7b/3g0qjk6934s2p3nsnn0xsjsh0000gn/T/codex-autoharness-live-test-l58lxksa/global/skills/python-subprocess-bytes/SKILL.md)",
+  "passed": true
+}

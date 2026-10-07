@@ -1,0 +1,24 @@
+{
+  "verified_date": "2026-10-07",
+  "real_codex": true,
+  "synthetic_input": true,
+  "isolated_skill_roots": true,
+  "update": {
+    "input": "Improve existing managed subprocess-bytes: capture stdout and stderr as bytes; decode only for display.",
+    "all_verdicts_ok": true,
+    "action": "patch",
+    "body_changed": true,
+    "preserves_stdout_and_stderr": true,
+    "ledger_entries": 1
+  },
+  "curation": {
+    "input": "Consolidate managed subprocess-bytes (stdout rule) and subprocess-stderr-bytes (stderr rule).",
+    "all_verdicts_ok": true,
+    "live_project_skill_count": 1,
+    "preserves_stdout_and_stderr": true,
+    "managed_snapshot_count": 1
+  },
+  "passed": true,
+  "reproduce": "python3 tools/live_update_curate.py --report docs/live-update-curate.json",
+  "note": "Recorded from the successful isolated API smoke checks. The reproduction script additionally checks the archive and total live count across both layers."
+}

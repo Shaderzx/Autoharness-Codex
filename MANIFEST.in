@@ -1,0 +1,9 @@
+include LICENSE NOTICE.md README.md
+recursive-include .codex-plugin *.json
+recursive-include .agents/plugins *.json
+recursive-include hooks *.json
+recursive-include bin *.py
+recursive-include skills *.md *.py
+recursive-include docs *.md
+recursive-include tools *.py
+recursive-include src *.md *.toml *.json

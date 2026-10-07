@@ -1,0 +1,20 @@
+{
+  "name": "codex-autoharness-local",
+  "interface": {
+    "displayName": "Codex AutoHarness local"
+  },
+  "plugins": [
+    {
+      "name": "codex-autoharness",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
