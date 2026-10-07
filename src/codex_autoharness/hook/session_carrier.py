@@ -16,6 +16,7 @@ MAX_CACHED_SESSIONS = 5
 
 @contextmanager
 def cache(root, session_id, identity):
+    """Lock the private history entry for one host session and routing identity."""
     key = hashlib.sha256(json.dumps([session_id, identity], sort_keys=True).encode()).hexdigest()
     directory = layer.checked_path(root, "codex-autoharness", "learner-sessions")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -33,6 +34,7 @@ def cache(root, session_id, identity):
 
 
 def _history(text):
+    """Convert a native rollout to redacted messages without inherited authority."""
     records = [json.loads(line) for line in text.splitlines() if line.strip()]
     if not records or any(not isinstance(record, dict) for record in records):
         raise ValueError("invalid learner history")

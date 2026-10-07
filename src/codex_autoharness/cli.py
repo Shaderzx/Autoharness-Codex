@@ -12,6 +12,7 @@ from codex_autoharness.stage_skill import server
 
 
 def parser():
+    """Define maintenance commands and their explicit scope options."""
     p = argparse.ArgumentParser(prog="codex-autoharness", description="Learn, curate and recall native Codex skills from real sessions.")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--project", type=Path, help="Project directory (defaults to the current project); install uses global scope unless supplied")
@@ -48,11 +49,13 @@ def parser():
 
 
 def _emit(value):
+    """Print a JSON result and return its success status."""
     print(json.dumps(value, indent=2, ensure_ascii=False, default=str))
     return 0 if value.get("ok", True) else 1
 
 
 def _history(args, roots):
+    """Read recent run accounts or one managed skill ledger."""
     root = roots[args.level]
     if args.name:
         if not sidecar.is_agent_created(args.level, args.name, root):
@@ -64,6 +67,7 @@ def _history(args, roots):
 
 
 def _archive_restore(args, roots):
+    """Move managed skills between the live library and archive."""
     root = roots[args.level]
     if args.command == "archive":
         if not sidecar.is_agent_created(args.level, args.name, root):
@@ -79,6 +83,7 @@ def _archive_restore(args, roots):
 
 
 def main(argv=None):
+    """Dispatch a maintenance command through the trusted host pipeline."""
     args = parser().parse_args(argv)
     roots = integration.roots(project=args.project, home=args.home)
     if hasattr(args, "level"):

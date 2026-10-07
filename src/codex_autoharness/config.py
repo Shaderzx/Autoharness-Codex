@@ -10,6 +10,7 @@ from codex_autoharness.lib import layer
 
 
 def _int_env(name, default, minimum=None):
+    """Read an integer override, enforcing its floor or using the default."""
     try:
         floor = (0 if default == 0 else 1) if minimum is None else minimum
         return max(floor, int(os.environ[name]))

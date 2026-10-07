@@ -18,14 +18,17 @@ from codex_autoharness.hook.spawn import build_command
 
 @pytest.mark.skipif(not shutil.which("codex"), reason="Codex CLI is not installed")
 def test_real_codex_proposer_request_has_no_tools(tmp_path):
+    """Verify native Codex sends the selected model and effort with no tools."""
     captured = []
     received = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
+            """Silence HTTP fixture access logs."""
             pass
 
         def do_GET(self):
+            """Serve the local provider model-list fixture."""
             data = json.dumps({"data": [{"id": "probe-model", "object": "model",
                                          "created": 0, "owned_by": "local"}]}).encode()
             self.send_response(200)
@@ -34,6 +37,7 @@ def test_real_codex_proposer_request_has_no_tools(tmp_path):
             self.wfile.write(data)
 
         def do_POST(self):
+            """Capture a native provider request and return the probe response."""
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             captured.append(payload)
             received.set()
@@ -84,19 +88,23 @@ def test_real_codex_proposer_request_has_no_tools(tmp_path):
 @pytest.mark.skipif(not shutil.which("codex"), reason="Codex CLI is not installed")
 @pytest.mark.parametrize("carrier", ["resume", "fork"])
 def test_real_codex_reuses_isolated_learner_history(tmp_path, carrier):
+    """Verify three native reuse generations retain context without tools or copied state."""
     captured = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
+            """Silence HTTP fixture access logs."""
             pass
 
         def do_GET(self):
+            """Serve the local provider model-list fixture."""
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"data":[]}')
 
         def do_POST(self):
+            """Capture a native provider request and return the probe response."""
             captured.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             events = [
                 {"type": "response.created", "response": {"id": "local-response"}},

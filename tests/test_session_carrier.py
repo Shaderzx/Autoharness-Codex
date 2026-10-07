@@ -14,6 +14,7 @@ LEARNER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    """Isolate the source Codex home and project/global roots."""
     source = tmp_path / "source"
     source.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(source))
@@ -21,6 +22,7 @@ def setup(tmp_path, monkeypatch):
 
 
 def rollout(home, text="previous redacted learner bundle", identity=LEARNER_ID):
+    """Write a minimal native learner rollout with a controlled identity."""
     timestamp = "2026-10-07T01:02:03Z"
     path = Path(home) / f"sessions/2026/10/07/rollout-2026-10-07T01-02-03-{identity}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,7 +36,9 @@ def rollout(home, text="previous redacted learner bundle", identity=LEARNER_ID):
 
 
 def child(calls, *, output='{"intents":[]}'):
+    """Create a proposer stub that records calls and writes history and output."""
     def invoke(argv, env, bundle):
+        """Record one isolated invocation and emit its configured proposal."""
         calls.append((list(argv), dict(env), bundle))
         rollout(env["CODEX_HOME"])
         Path(argv[argv.index("--output-last-message") + 1]).write_text(output)
@@ -43,11 +47,13 @@ def child(calls, *, output='{"intents":[]}'):
 
 
 def cached(roots):
+    """List retained history entries for the fixture project."""
     return list((layer.state_dir("project", roots["project"]) / "learner-sessions").glob("*.json"))
 
 
 @pytest.mark.parametrize("carrier", ["resume", "fork"])
 def test_reuses_only_owned_learner_and_retains_isolation(setup, carrier):
+    """Reuse the learner UUID without importing parent content or exposing tools."""
     roots, source = setup
     rollout(source, "UNREDACTED_PARENT_SESSION", identity="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
     calls = []
@@ -73,6 +79,7 @@ def test_reuses_only_owned_learner_and_retains_isolation(setup, carrier):
 
 
 def test_no_host_identity_and_curator_keep_fresh_default(setup, monkeypatch):
+    """Keep anonymous reflection and all curator processes ephemeral."""
     roots, _ = setup
     monkeypatch.setattr(config, "REFLECTOR_CARRIER", "resume")
     calls = []
@@ -84,6 +91,7 @@ def test_no_host_identity_and_curator_keep_fresh_default(setup, monkeypatch):
 
 
 def test_carrier_environment_is_operator_opt_in(monkeypatch):
+    """Normalize an explicit operator carrier selection."""
     monkeypatch.setenv("CODEX_AUTOHARNESS_REFLECTOR_CARRIER", " FORK ")
     importlib.reload(config)
     try:
@@ -94,6 +102,7 @@ def test_carrier_environment_is_operator_opt_in(monkeypatch):
 
 
 def test_distinct_session_and_routing_configs_never_share_history(setup):
+    """Separate histories when session identity or effective routing changes."""
     roots, source = setup
     calls = []
     settings = [dict(session_id="one", model="m1", reasoning_effort="high"),
@@ -112,6 +121,7 @@ def test_distinct_session_and_routing_configs_never_share_history(setup):
 
 
 def test_unavailable_resume_retries_fresh_before_any_promotion(setup):
+    """Retry failed reuse fresh and persist exactly one admitted change."""
     roots, _ = setup
     spawn.run("episode", "seed", roots=roots, session_id="host", carrier="resume", spawn_fn=child([]))
     calls = []
@@ -119,6 +129,7 @@ def test_unavailable_resume_retries_fresh_before_any_promotion(setup):
     row.update(action="create", name="fallback-rule", level="project", reason="Lesson",
                evidence="episode", body="---\nname: fallback-rule\ndescription: Use when testing.\n---\nCheck the operation.\n")
     def failing_resume(argv, env, bundle):
+        """Fail the reuse attempt and produce a proposal only on fresh fallback."""
         calls.append(argv)
         if "resume" in argv:
             return SimpleNamespace(returncode=1)
@@ -130,10 +141,12 @@ def test_unavailable_resume_retries_fresh_before_any_promotion(setup):
 
 
 def test_failed_carrier_with_output_never_retries_or_lands(setup):
+    """Reject failed reuse with output without replaying or promoting it."""
     roots, _ = setup
     spawn.run("episode", "seed", roots=roots, session_id="host", carrier="fork", spawn_fn=child([]))
     calls = []
     def failing_with_output(argv, env, bundle):
+        """Emit valid output while reporting an unsuccessful child process."""
         child(calls)(argv, env, bundle)
         return SimpleNamespace(returncode=1)
     with pytest.raises(spawn.RunnerError, match="child_exit_failure"):
@@ -143,6 +156,7 @@ def test_failed_carrier_with_output_never_retries_or_lands(setup):
 
 
 def test_prior_learner_messages_cannot_supply_current_evidence(setup):
+    """Reject proposal evidence absent from the current episode."""
     roots, _ = setup
     spawn.run("previous quote", "seed", roots=roots, session_id="host", carrier="resume", spawn_fn=child([]))
     row = dict.fromkeys(spawn._INTENT_KEYS)
@@ -155,6 +169,7 @@ def test_prior_learner_messages_cannot_supply_current_evidence(setup):
 
 
 def test_corrupt_and_oversize_histories_start_fresh(setup):
+    """Discard unreadable or oversized caches before invoking Codex."""
     roots, _ = setup
     calls = []
     spawn.run("episode", "seed", roots=roots, session_id="host", carrier="fork", spawn_fn=child(calls))
@@ -169,6 +184,7 @@ def test_corrupt_and_oversize_histories_start_fresh(setup):
 
 
 def test_history_redaction_preserves_native_json_identity(tmp_path):
+    """Remove recognized sensitive text while preserving the native learner UUID."""
     home, root = tmp_path / "home", tmp_path / "p"
     path = rollout(home, "alice@example.com bearer " + "X" * 30 + "\napi_key='test-secret-value'")
     with session_carrier.cache(root, "host", ["model"]) as cache_path:
@@ -182,6 +198,7 @@ def test_history_redaction_preserves_native_json_identity(tmp_path):
 
 
 def test_cache_discards_persisted_authority_and_paginated_parent_links(tmp_path):
+    """Retain messages while dropping executable settings and parent references."""
     home, root = tmp_path / "home", tmp_path / "p"
     original = rollout(home)
     rows = [json.loads(line) for line in original.read_text().splitlines()]
@@ -205,6 +222,7 @@ def test_cache_discards_persisted_authority_and_paginated_parent_links(tmp_path)
 
 
 def test_cache_retention_and_history_cap_are_bounded(tmp_path, monkeypatch):
+    """Enforce entry-count retention and discard history beyond the byte cap."""
     home, root = tmp_path / "home", tmp_path / "p"
     rollout(home)
     for number in range(8):
@@ -218,6 +236,7 @@ def test_cache_retention_and_history_cap_are_bounded(tmp_path, monkeypatch):
 
 
 def test_redirected_cache_directory_is_refused(setup, tmp_path):
+    """Refuse a symlinked cache directory without touching its destination."""
     roots, _ = setup
     outside = tmp_path / "outside"
     outside.mkdir()

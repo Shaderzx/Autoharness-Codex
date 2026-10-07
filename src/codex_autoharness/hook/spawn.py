@@ -70,11 +70,13 @@ class RunnerError(RuntimeError):
 
 
 def _bounded(text, limit):
+    """Clip UTF-8 text to the byte budget and mark omitted content."""
     encoded = text.encode("utf-8")
     return text if len(encoded) <= limit else encoded[:limit].decode("utf-8", errors="ignore") + "\n[truncated]\n"
 
 
 def _skill_paths(roots, agent_only=False):
+    """Enumerate safe live skill files, optionally requiring ownership."""
     for lyr in layer.unique_layers(roots):
         root = roots.get(lyr)
         directory = layer.skills_dir(lyr, root)
@@ -89,6 +91,7 @@ def _skill_paths(roots, agent_only=False):
 
 
 def description_index(roots=None, *, agent_only=False):
+    """Render a bounded redacted index with each skill ownership label."""
     lines = []
     for lyr, root, path in _skill_paths(roots or {}, agent_only):
         if path.stat().st_size > config.STAGE_MAX_BODY_BYTES:
@@ -165,6 +168,7 @@ def _skill_fingerprint(directory):
 
 
 def _library_context(roots, *, curator=False):
+    """Capture managed content and fingerprints under library locks."""
     with lock_roots(roots):
         index = description_index(roots, agent_only=curator)
         library = managed_library(roots)
@@ -174,6 +178,7 @@ def _library_context(roots, *, curator=False):
 
 
 def _verify_library_versions(intents, roots, versions):
+    """Reject proposals whose affected managed content changed during inference."""
     names = {intent["name"] for intent in intents if intent["action"] != "create"}
     names.update(intent["absorbed_into"] for intent in intents if intent.get("absorbed_into"))
     try:
@@ -189,6 +194,7 @@ def _verify_library_versions(intents, roots, versions):
 
 
 def build_bundle(window, index, spec, digest="", library="", *, curate=False):
+    """Combine current redacted evidence and library context within the input cap."""
     prior = f"# Prior context (background only; never evidence)\n{digest}\n\n" if digest else ""
     limits = (f"\nEnforced numeric limits: description at most {config.INDEX_DESC_MAX_CHARS} characters, "
               f"including spaces and punctuation; begin it with 'Use when'. SKILL.md body at most "
@@ -212,11 +218,13 @@ def build_bundle(window, index, spec, digest="", library="", *, curate=False):
 
 
 def build_curator_bundle(index, spec, library=""):
+    """Build a curation request using managed library bodies as evidence."""
     return build_bundle("(curation uses the managed library below)", index, spec, library=library, curate=True)
 
 
 def build_command(*, codex_bin=None, output_path, schema_path=None, cwd=None, model=None,
                   reasoning_effort=None, carrier="bundle", learner_id=None):
+    """Build native Codex argv with explicit isolation and optional learner reuse."""
     if carrier not in {"bundle", "resume", "fork"}:
         raise RunnerError("unsupported_carrier")
     argv = [str(codex_bin or config.CODEX_BIN), "exec", "--skip-git-repo-check",
@@ -242,6 +250,7 @@ def build_command(*, codex_bin=None, output_path, schema_path=None, cwd=None, mo
 
 
 def child_env(run_id, root, *, base_env=None):
+    """Mark a child reflection and identify its queue and project root."""
     env = dict(os.environ if base_env is None else base_env)
     env[config.CHILD_SESSION_ENV] = "1"
     env[config.RUN_ID_ENV] = run_id
@@ -250,6 +259,7 @@ def child_env(run_id, root, *, base_env=None):
 
 
 def _toml_value(value):
+    """Serialize supported model-provider configuration values to TOML."""
     if isinstance(value, str):
         return json.dumps(value)
     if isinstance(value, bool):
@@ -301,12 +311,14 @@ def _isolated_home(directory, env, *, source_home=None, model_provider=None, rea
 
 
 def _detached_spawn(argv, env, bundle, *, timeout_s=None):
+    """Run one bounded proposer process without forwarding its output."""
     return subprocess.run(argv, input=bundle, text=True, env=env,
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                           check=False, timeout=timeout_s or config.REFLECTOR_TIMEOUT_S)
 
 
 def _unique_object(pairs):
+    """Reject duplicate keys when decoding a proposal JSON object."""
     result = {}
     for key, value in pairs:
         if key in result:
@@ -316,6 +328,7 @@ def _unique_object(pairs):
 
 
 def parse_proposals(text):
+    """Validate a complete response before normalizing its staging intents."""
     if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise RunnerError("proposal_limit")
     try:
@@ -362,6 +375,7 @@ def parse_proposals(text):
 
 
 def _record_outcome(run_id, roots, error=None):
+    """Persist a sanitized success or failure account for a reflection."""
     proot = roots.get(layer.PROJECT)
     intent_queue._path(run_id, proot)
     record = {"run_id": run_id, "status": "error" if error else "ok", "verdicts": []}
@@ -377,6 +391,7 @@ def _record_outcome(run_id, roots, error=None):
 def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=None,
              timeout_s=None, model=None, model_provider=None, reasoning_effort=None,
              source_home=None, evidence_text="", versions=None, carrier="bundle", session_id=None):
+    """Run an isolated proposer and admit current-source proposals exactly once."""
     proot = roots.get(layer.PROJECT)
     intent_queue._path(run_id, proot)
     try:
@@ -448,6 +463,7 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
 def run(window_text, run_id, *, roots, repo_name=None, agent=None, codex_bin=None,
         spec_path=None, digest="", session_id=None, carrier=None, spawn_fn=None,
         timeout_s=None, model=None, model_provider=None, reasoning_effort=None, source_home=None):
+    """Prepare a current episode bundle and execute its configured learner carrier."""
     roots = roots or {}
     try:
         spec = Path(spec_path or config.FORMAT_SPEC).read_text(encoding="utf-8")
@@ -466,6 +482,7 @@ def run(window_text, run_id, *, roots, repo_name=None, agent=None, codex_bin=Non
 
 
 def _snapshot_skills(run_id, roots):
+    """Archive managed libraries before curation and enforce snapshot retention."""
     intent_queue._path(run_id, roots.get(layer.PROJECT))
     with lock_roots(roots):
         snapdir = layer.checked_path(roots.get(layer.PROJECT) or layer.default_root(layer.PROJECT), "codex-autoharness", "snapshots")
@@ -494,6 +511,7 @@ def _snapshot_skills(run_id, roots):
 def run_curator(run_id, *, roots, repo_name=None, agent=None, codex_bin=None,
                 spec_path=None, spawn_fn=None, timeout_s=None, model=None,
                 model_provider=None, reasoning_effort=None, source_home=None):
+    """Snapshot the managed library before executing a fresh curator."""
     roots = roots or {}
     try:
         with lock_roots(roots):
@@ -511,6 +529,7 @@ def run_curator(run_id, *, roots, repo_name=None, agent=None, codex_bin=None,
 
 
 def main(argv=None):
+    """Serialize each session reflection with its transcript watermark transaction."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--curate", action="store_true")
     parser.add_argument("--model")
