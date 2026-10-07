@@ -51,6 +51,7 @@ def test_project_root_linked_worktree_maps_to_main_root(linked_worktree, main_re
 
 
 def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_repo, linked_worktree, tmp_path, monkeypatch):
+    """Exclude owned runtime files while preserving authored content and cheap counters."""
     root = main_repo / "nested[?]" / ".agents"
     roots = {layer.GLOBAL: tmp_path / "home" / ".agents", layer.PROJECT: root}
     exclude = main_repo / ".git" / "info" / "exclude"
@@ -79,6 +80,7 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
     assert sidecar.read(layer.PROJECT, "learned", root)["use"] == 1
 
     def status(cwd=main_repo):
+        """Report tracked changes and every untracked file in the selected worktree."""
         return subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"],
                                        cwd=cwd, text=True)
 
@@ -93,8 +95,13 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
     with monkeypatch.context() as patcher:
         calls = []
         original_run = subprocess.run
-        patcher.setattr(git_exclude.subprocess, "run", lambda *args, **kwargs:
-                        calls.append(args[0]) or original_run(*args, **kwargs))
+
+        def spy_run(*args, **kwargs):
+            """Record subprocess commands while preserving their actual results."""
+            calls.append(args[0])
+            return original_run(*args, **kwargs)
+
+        patcher.setattr(git_exclude.subprocess, "run", spy_run)
         sidecar.bump_use(layer.PROJECT, "learned", root)
         sidecar.bump_view(layer.PROJECT, "learned", root)
         counters.bump_request(layer.PROJECT, root)
@@ -125,6 +132,7 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
         original_land = promoter._land
 
         def failed_land(*args):
+            """Fail after ownership publication to exercise exclusion rollback."""
             original_land(*args)
             raise OSError("after ownership write")
 

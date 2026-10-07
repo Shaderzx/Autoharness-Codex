@@ -202,6 +202,7 @@ def _finish_transaction(journal, backup):
 
 
 def _rollback_transaction(record, root, journal, backup):
+    """Restore the prior skill tree and refresh exclusions before releasing root locks."""
     name = record["name"]
     target = layer.symbol_dir(record["level"], name, root)
     if record["had_target"]:

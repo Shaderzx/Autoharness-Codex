@@ -81,6 +81,7 @@ def archive(lyr, name, root=None):
 
 
 def _archive(lyr, name, root=None):
+    """Move an owned skill to a collision-safe archive and refresh local exclusions."""
     sdir = layer.symbol_dir(lyr, name, root)
     if not sdir.exists():
         return None
@@ -155,6 +156,7 @@ def restore_snapshot(lyr, name, snapshot, root=None):
 
 
 def _restore(lyr, name, root=None):
+    """Restore an owned archive without replacing a live skill and refresh exclusions."""
     layer._check_name(name)
     src = layer.checked_path(layer._root(lyr, root), "skills", ".archive", name)
     if not src.exists():

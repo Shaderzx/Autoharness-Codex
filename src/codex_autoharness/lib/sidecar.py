@@ -35,6 +35,7 @@ def write(lyr, name, data, root=None):
 
 
 def create(lyr, name, anchor, root=None):
+    """Initialize owned counters and register the skill's local Git exclusion."""
     data = {"created_by": OWNER, "use": 0, "view": 0, "patch": 0,
             "anchor": int(anchor), "verification": None}
     with lock_root(layer._root(lyr, root)):
