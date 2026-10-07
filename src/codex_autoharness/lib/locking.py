@@ -32,13 +32,8 @@ def lock_root(root):
             try:
                 yield
             finally:
-                from codex_autoharness.lib import git_exclude
-
-                try:
-                    git_exclude.sync(root)
-                finally:
-                    _held.pop(key, None)
-                    fcntl.flock(fd, fcntl.LOCK_UN)
+                _held.pop(key, None)
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
 

@@ -15,6 +15,7 @@ import uuid
 from codex_autoharness.lib import (
     atomic,
     counters,
+    git_exclude,
     intent_queue,
     layer,
     ledger,
@@ -207,12 +208,15 @@ def _rollback_transaction(record, root, journal, backup):
         if not backup.is_dir():
             raise ValueError("pending transaction backup is missing")
         _check_backup(root, backup)
-    if target.exists():
-        _preflight_paths(record["level"], name, root, {})
-        shutil.rmtree(target)
-    if record["had_target"]:
-        shutil.copytree(backup, target)
-    _finish_transaction(journal, backup)
+    try:
+        if target.exists():
+            _preflight_paths(record["level"], name, root, {})
+            shutil.rmtree(target)
+        if record["had_target"]:
+            shutil.copytree(backup, target)
+        _finish_transaction(journal, backup)
+    finally:
+        git_exclude.sync(root)
 
 
 def _check_backup(root, backup):
@@ -246,6 +250,7 @@ def recover(roots=None):
                 committed = None  # interrupted ledger append: restore the valid backup
             if committed:
                 _finish_transaction(journal, backup)
+                git_exclude.sync(root)
             else:
                 _rollback_transaction(record, root, journal, backup)
 

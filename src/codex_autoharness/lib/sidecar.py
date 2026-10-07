@@ -4,7 +4,7 @@ Only the codex-autoharness owner marker authorizes management. Root locks protec
 read-modify-write counters; a use after a patch records the reused generation."""
 import json
 
-from codex_autoharness.lib import atomic, layer
+from codex_autoharness.lib import atomic, git_exclude, layer
 from codex_autoharness.lib.locking import lock_root
 
 FILENAME = ".sidecar.json"
@@ -37,7 +37,9 @@ def write(lyr, name, data, root=None):
 def create(lyr, name, anchor, root=None):
     data = {"created_by": OWNER, "use": 0, "view": 0, "patch": 0,
             "anchor": int(anchor), "verification": None}
-    write(lyr, name, data, root)
+    with lock_root(layer._root(lyr, root)):
+        write(lyr, name, data, root)
+        git_exclude.sync(layer._root(lyr, root))
     return data
 
 

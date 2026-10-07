@@ -3,7 +3,7 @@ import subprocess
 import pytest
 
 from codex_autoharness.hook import on_session_start, on_skill_call, promoter
-from codex_autoharness.lib import layer, sidecar, skill_store
+from codex_autoharness.lib import counters, git_exclude, layer, sidecar, skill_store
 
 
 def _git(cwd, *args):
@@ -50,7 +50,7 @@ def test_project_root_linked_worktree_maps_to_main_root(linked_worktree, main_re
     assert _project_root_at(monkeypatch, linked_worktree) == main_repo / ".agents"
 
 
-def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_repo, linked_worktree, tmp_path):
+def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_repo, linked_worktree, tmp_path, monkeypatch):
     root = main_repo / "nested[?]" / ".agents"
     roots = {layer.GLOBAL: tmp_path / "home" / ".agents", layer.PROJECT: root}
     exclude = main_repo / ".git" / "info" / "exclude"
@@ -90,6 +90,16 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
     before = exclude.stat().st_mtime_ns
     on_session_start.on_session_start(roots=roots)
     assert exclude.stat().st_mtime_ns == before
+    with monkeypatch.context() as patcher:
+        calls = []
+        original_run = subprocess.run
+        patcher.setattr(git_exclude.subprocess, "run", lambda *args, **kwargs:
+                        calls.append(args[0]) or original_run(*args, **kwargs))
+        sidecar.bump_use(layer.PROJECT, "learned", root)
+        sidecar.bump_view(layer.PROJECT, "learned", root)
+        counters.bump_request(layer.PROJECT, root)
+        counters.bump_session("hot-counter", root)
+        assert calls == []
     assert "learned" not in status(linked_worktree)
     archived = skill_store.archive(layer.PROJECT, "learned", root)
     assert "learned" not in status()
@@ -111,12 +121,24 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
     (root / "skills" / "linked-skill").symlink_to(owned, target_is_directory=True)
     on_session_start.on_session_start(roots=roots)
     assert "linked-skill" in status()
+    with monkeypatch.context() as patcher:
+        original_land = promoter._land
+
+        def failed_land(*args):
+            original_land(*args)
+            raise OSError("after ownership write")
+
+        patcher.setattr(promoter, "_land", failed_land)
+        failed = {**intent, "name": "failed-create", "body": intent["body"].replace("learned", "failed-create")}
+        assert not promoter.promote(failed, roots=roots)["ok"]
+    skill_store.write_body(layer.PROJECT, "failed-create", "User replacement.\n", root)
+    assert "failed-create/SKILL.md" in status()
     saved = exclude.read_bytes()
     exclude.unlink()
     outside = tmp_path / "external-exclude"
     outside.write_bytes(saved)
     exclude.symlink_to(outside)
-    sidecar.bump_view(layer.PROJECT, "other-skill", another)
+    on_session_start.on_session_start(roots={**roots, layer.PROJECT: another})
     assert outside.read_bytes() == saved and exclude.is_symlink()
 
 

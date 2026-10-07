@@ -16,6 +16,7 @@ from pathlib import Path
 from codex_autoharness import config
 from codex_autoharness.lib import (
     counters,
+    git_exclude,
     layer,
     lifecycle,
     sidecar,
@@ -155,6 +156,7 @@ def _on_session_start(event=None, *, roots=None):
         for name in names:
             skill_store.archive(lyr, name, root)
         archived[lyr] = names
+        git_exclude.sync(layer._root(lyr, root))
     parts = [last_run_summary(roots), recall_index(roots, (event or {}).get("cwd"))]  # index built after archiving
     new_skills, imported_count = [], 0
     for lyr, result in imported.items():
