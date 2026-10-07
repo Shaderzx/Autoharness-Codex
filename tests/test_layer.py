@@ -1,9 +1,17 @@
+import shutil
 import subprocess
 
 import pytest
 
 from codex_autoharness.hook import on_session_start, on_skill_call, promoter
-from codex_autoharness.lib import counters, git_exclude, layer, sidecar, skill_store
+from codex_autoharness.lib import (
+    counters,
+    git_exclude,
+    layer,
+    sidecar,
+    skill_import,
+    skill_store,
+)
 
 
 def _git(cwd, *args):
@@ -149,6 +157,21 @@ def test_managed_skills_stay_out_of_git_diff_without_hiding_user_skills(main_rep
         assert not promoter.promote(failed, roots=roots)["ok"]
     skill_store.write_body(layer.PROJECT, "failed-create", "User replacement.\n", root)
     assert "failed-create/SKILL.md" in status()
+    skill_store.write_body(layer.PROJECT, "import-replacement", "Managed instructions.\n", another)
+    sidecar.create(layer.PROJECT, "import-replacement", 0, another)
+    replacement = skill_store.skill_path(layer.PROJECT, "import-replacement", another)
+    shutil.rmtree(replacement.parent)  # simulate external removal without a startup refresh
+    source = another.parent / ".claude" / "skills" / "import-replacement"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("Imported user instructions.\n")
+    guide = source / "references" / "new-guide.md"
+    guide.parent.mkdir()
+    guide.write_text("Imported author instructions.\n")
+    assert skill_import.import_layer(layer.PROJECT, another)["imported"] == ["import-replacement"]
+    imported_status = status()
+    assert ".agents/skills/import-replacement/SKILL.md" in imported_status
+    assert ".agents/skills/import-replacement/references/new-guide.md" in imported_status
+    assert "other-skill" not in imported_status
     saved = exclude.read_bytes()
     exclude.unlink()
     outside = tmp_path / "external-exclude"
