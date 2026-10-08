@@ -71,6 +71,7 @@ class RunnerError(RuntimeError):
     """Sanitized failure suitable for CLI output and run accounts."""
 
     def __init__(self, code, *, detail=None):
+        """Keep a stable error code with optional validation diagnostics."""
         super().__init__(code)
         self.detail = detail
 
@@ -408,14 +409,26 @@ def parse_proposals(text):
 
 
 def _redacted_proposal(text):
-    """Redact decoded strings so JSON escapes cannot hide credentials."""
+    """Redact decoded proposal values before saving a rejection artifact."""
     def safe(value):
+        """Walk JSON values and redact strings and sensitive numeric leaves."""
         if isinstance(value, str):
             return redact.redact(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            text = str(value)
+            redacted = redact.redact(text)
+            return redacted if redacted != text else value
         if isinstance(value, list):
             return [safe(item) for item in value]
         if isinstance(value, dict):
-            return {safe(key): safe(item) for key, item in value.items()}
+            result = {safe(key): safe(item) for key, item in value.items()}
+            # Field labels can make otherwise ordinary values sensitive.
+            for key, item in result.items():
+                if isinstance(item, (str, int, float)) and not isinstance(item, bool):
+                    assignment = f"{key}={item}"
+                    if redact.contains_secret(assignment):
+                        result[key] = redact.redact(assignment)
+            return result
         return value
 
     try:

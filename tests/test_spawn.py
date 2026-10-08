@@ -246,6 +246,7 @@ def test_schema_normalizes_subfiles_and_rejects_duplicates():
     {"action": "update", "body": GOOD.format(n="learned")},
 ])
 def test_empty_files_parse_like_null(values):
+    """Accept empty file arrays for every action as if files were null."""
     row = proposal(body=None)
     row.update(values)
     expected = spawn.parse_proposals(json.dumps({"intents": [row]}))
@@ -261,6 +262,7 @@ def test_empty_files_parse_like_null(values):
     {"action": "remove_file", "path": "references/test.md"},
 ])
 def test_unused_empty_strings_parse_like_null(values):
+    """Drop unused empty strings while preserving an empty patch replacement."""
     row = proposal(body=None)
     row.update(values)
     expected = spawn.parse_proposals(json.dumps({"intents": [row]}))
@@ -280,6 +282,7 @@ def test_unused_empty_strings_parse_like_null(values):
     {"action": "delete", "body": None, "files": {}},
 ])
 def test_normalization_keeps_wrong_intents_invalid(values):
+    """Reject conflicting content, missing required values and invalid file shapes."""
     with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
         spawn.parse_proposals(json.dumps({"intents": [proposal(**values)]}))
 
@@ -287,11 +290,13 @@ def test_normalization_keeps_wrong_intents_invalid(values):
 @pytest.mark.parametrize("curate", [False, True])
 @pytest.mark.parametrize("escaped", [False, True])
 def test_schema_rejection_keeps_redacted_proposal_and_detail(tmp_path, curate, escaped):
+    """Save indexed diagnostics and private artifacts without staging an invalid batch."""
     roots = _roots(tmp_path)
     secret = "sk-" + "fixture" * 6
     rows = [proposal(), proposal(action="patch", body="wrong " + secret,
                                 old_string="before", new_string="after", files=[])]
     def child(argv, env, bundle):
+        """Emit invalid proposals with literal or JSON-escaped fixture credentials."""
         result = fake_child(rows)(argv, env, bundle)
         if escaped:
             path = Path(argv[argv.index("--output-last-message") + 1])
@@ -324,8 +329,10 @@ def test_schema_rejection_keeps_redacted_proposal_and_detail(tmp_path, curate, e
     '{"intents": [NaN]}',
 ])
 def test_malformed_json_is_not_saved_without_safe_redaction(tmp_path, text):
+    """Retain only a diagnostic marker when rejected JSON cannot be safely decoded."""
     roots = _roots(tmp_path)
     def child(argv, env, bundle):
+        """Emit the malformed JSON fixture from the isolated proposer."""
         Path(argv[argv.index("--output-last-message") + 1]).write_text(text)
         return SimpleNamespace(returncode=0)
     with pytest.raises(spawn.RunnerError, match="invalid_json"):
@@ -336,6 +343,7 @@ def test_malformed_json_is_not_saved_without_safe_redaction(tmp_path, text):
 
 
 def test_rejected_json_with_surrogate_still_records_schema_failure(tmp_path):
+    """Preserve diagnostics when invalid proposals contain a lone Unicode surrogate."""
     roots = _roots(tmp_path)
     with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
         spawn.run("Use a temporary fixture", "bad-surrogate", roots=roots,
@@ -346,6 +354,7 @@ def test_rejected_json_with_surrogate_still_records_schema_failure(tmp_path):
 
 
 def test_schema_rejection_with_missing_fields_has_detail(tmp_path):
+    """Record the intent index and rejected payload for missing required fields."""
     roots = _roots(tmp_path)
     with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
         spawn.run("Use a temporary fixture", "bad-fields", roots=roots,
@@ -354,6 +363,41 @@ def test_schema_rejection_with_missing_fields_has_detail(tmp_path):
     account = json.loads((state / "runs/bad-fields.json").read_text())
     assert account["detail"] == [["intents[0]", "intent must be an object containing exactly the required fields"]]
     assert json.loads((state / "rejected/bad-fields.json").read_text()) == {"intents": [{"action": "delete"}]}
+
+
+def test_schema_rejection_redacts_numeric_personal_data(tmp_path):
+    """Redact numeric card fixtures in rejected output without changing harmless types."""
+    roots = _roots(tmp_path)
+    card = int("4" + "1" * 15)
+    invalid_body = {"integer": card, "nested": [float(card), 42, 3.25, True, False, None]}
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.run("Use a temporary fixture", "bad-numeric", roots=roots,
+                  spawn_fn=fake_child([proposal(body=invalid_body)]))
+    state = layer.state_dir("project", roots["project"])
+    saved = json.loads((state / "rejected/bad-numeric.json").read_text())["intents"][0]["body"]
+    assert saved["integer"] == "[REDACTED:pii:credit_card]"
+    assert saved["nested"][0].startswith("[REDACTED:pii:credit_card]")
+    assert str(card) not in json.dumps(saved)
+    assert saved["nested"][1:3] == [42, 3.25]
+    assert saved["nested"][3] is True
+    assert saved["nested"][4] is False
+    assert saved["nested"][5] is None
+    assert intent_queue.read("bad-numeric", roots["project"]) == []
+
+
+def test_schema_rejection_redacts_credentials_in_labeled_fields(tmp_path):
+    """Retain assignment-based redaction when credentials appear in JSON fields."""
+    roots = _roots(tmp_path)
+    password = "fixture" * 3
+    invalid_body = {"password": password, "nested": {"api_key": 987654321}, "harmless": "unchanged"}
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.run("Use a temporary fixture", "bad-labeled", roots=roots,
+                  spawn_fn=fake_child([proposal(body=invalid_body)]))
+    state = layer.state_dir("project", roots["project"])
+    saved = json.loads((state / "rejected/bad-labeled.json").read_text())["intents"][0]["body"]
+    assert saved["password"] == "[REDACTED:secret:api_key_assignment]"
+    assert saved["nested"]["api_key"] == "[REDACTED:secret:api_key_assignment]"
+    assert saved["harmless"] == "unchanged"
 
 
 @pytest.mark.parametrize("retire_first", [False, True])

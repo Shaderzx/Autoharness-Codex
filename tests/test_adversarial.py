@@ -276,6 +276,7 @@ def test_session_recall_does_not_follow_a_managed_skill_file_symlink(roots, tmp_
 
 @pytest.mark.parametrize("directory", ["runs", "snapshots", "rejected"])
 def test_runner_cannot_write_through_redirected_state_subdirectories(roots, tmp_path, directory):
+    """Refuse redirected state paths while preserving rejection diagnostics."""
     root = roots[layer.PROJECT]
     assert promoter.promote(proposal(), roots=roots)["ok"]
     outside = tmp_path / "unowned"
@@ -285,6 +286,7 @@ def test_runner_cannot_write_through_redirected_state_subdirectories(roots, tmp_
     source.mkdir()
 
     def fail_child(argv, env, bundle):
+        """Trigger rejection persistence or a child failure for the selected state path."""
         if directory == "rejected":
             Path(argv[argv.index("--output-last-message") + 1]).write_text('{"intents": [{}]}')
             return subprocess.CompletedProcess(argv, 0)
