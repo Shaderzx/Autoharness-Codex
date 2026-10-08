@@ -237,6 +237,169 @@ def test_schema_normalizes_subfiles_and_rejects_duplicates():
         spawn.parse_proposals(json.dumps({"intents": [row]}))
 
 
+@pytest.mark.parametrize("values", [
+    {"action": "patch", "old_string": "before", "new_string": "after"},
+    {"action": "delete"},
+    {"action": "delete", "absorbed_into": "umbrella"},
+    {"action": "remove_file", "path": "references/test.md"},
+    {"action": "create", "body": GOOD.format(n="learned")},
+    {"action": "update", "body": GOOD.format(n="learned")},
+])
+def test_empty_files_parse_like_null(values):
+    """Accept empty file arrays for every action as if files were null."""
+    row = proposal(body=None)
+    row.update(values)
+    expected = spawn.parse_proposals(json.dumps({"intents": [row]}))
+    row["files"] = []
+    assert spawn.parse_proposals(json.dumps({"intents": [row]})) == expected
+
+
+@pytest.mark.parametrize("values", [
+    {"action": "create", "body": GOOD.format(n="learned")},
+    {"action": "update", "body": GOOD.format(n="learned")},
+    {"action": "patch", "old_string": "before", "new_string": ""},
+    {"action": "delete", "absorbed_into": "umbrella"},
+    {"action": "remove_file", "path": "references/test.md"},
+])
+def test_unused_empty_strings_parse_like_null(values):
+    """Drop unused empty strings while preserving an empty patch replacement."""
+    row = proposal(body=None)
+    row.update(values)
+    expected = spawn.parse_proposals(json.dumps({"intents": [row]}))
+    for key in ("body", "old_string", "new_string", "path", "absorbed_into"):
+        if row[key] is None:
+            row[key] = ""
+    assert spawn.parse_proposals(json.dumps({"intents": [row]})) == expected
+
+
+@pytest.mark.parametrize("values", [
+    {"action": "patch", "body": "wrong", "old_string": "before", "new_string": "after"},
+    {"action": "patch", "body": None, "old_string": "", "new_string": "after"},
+    {"action": "patch", "body": None, "old_string": "before", "new_string": "after",
+     "files": [{"path": "references/test.md", "content": "Details"}]},
+    {"action": "delete", "body": "wrong"},
+    {"action": "remove_file", "body": None, "path": ""},
+    {"action": "delete", "body": None, "files": {}},
+])
+def test_normalization_keeps_wrong_intents_invalid(values):
+    """Reject conflicting content, missing required values and invalid file shapes."""
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.parse_proposals(json.dumps({"intents": [proposal(**values)]}))
+
+
+@pytest.mark.parametrize("curate", [False, True])
+@pytest.mark.parametrize("escaped", [False, True])
+def test_schema_rejection_keeps_redacted_proposal_and_detail(tmp_path, curate, escaped):
+    """Save indexed diagnostics and private artifacts without staging an invalid batch."""
+    roots = _roots(tmp_path)
+    secret = "sk-" + "fixture" * 6
+    rows = [proposal(), proposal(action="patch", body="wrong " + secret,
+                                old_string="before", new_string="after", files=[])]
+    def child(argv, env, bundle):
+        """Emit invalid proposals with literal or JSON-escaped fixture credentials."""
+        result = fake_child(rows)(argv, env, bundle)
+        if escaped:
+            path = Path(argv[argv.index("--output-last-message") + 1])
+            path.write_text(path.read_text().replace(secret, "".join(f"\\u{ord(char):04x}" for char in secret)))
+        return result
+    run = spawn.run_curator if curate else spawn.run
+    args = ("bad-detail",) if curate else ("Use a temporary fixture", "bad-detail")
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        run(*args, roots=roots, spawn_fn=child)
+    state = layer.state_dir("project", roots["project"])
+    for path in (state / "runs/bad-detail.json", state / "last_run.json"):
+        account = json.loads(path.read_text())
+        assert account["error"] == "invalid_proposal_schema"
+        assert account["detail"] == [["intents[1].schema", "patch takes old_string/new_string, not body"]]
+        assert account["rejected_proposal"] == "rejected/bad-detail.json"
+        assert secret not in path.read_text()
+    rejected = state / account["rejected_proposal"]
+    saved = json.loads(rejected.read_text())
+    assert saved["intents"][1]["files"] == []
+    assert saved["intents"][1]["body"].startswith("wrong [REDACTED:")
+    assert secret not in rejected.read_text()
+    assert rejected.stat().st_mode & 0o777 == 0o600
+    assert intent_queue.read("bad-detail", roots["project"]) == []
+    assert skill_store.read_body("project", "learned", roots["project"]) is None
+
+
+@pytest.mark.parametrize("text", [
+    '{"intents": ["' + "\\u0073\\u006b\\u002d" + "fixture" * 6,
+    '{"intents": [], "intents": []}',
+    '{"intents": [NaN]}',
+])
+def test_malformed_json_is_not_saved_without_safe_redaction(tmp_path, text):
+    """Retain only a diagnostic marker when rejected JSON cannot be safely decoded."""
+    roots = _roots(tmp_path)
+    def child(argv, env, bundle):
+        """Emit the malformed JSON fixture from the isolated proposer."""
+        Path(argv[argv.index("--output-last-message") + 1]).write_text(text)
+        return SimpleNamespace(returncode=0)
+    with pytest.raises(spawn.RunnerError, match="invalid_json"):
+        spawn.run("Use a temporary fixture", "bad-json", roots=roots, spawn_fn=child)
+    state = layer.state_dir("project", roots["project"])
+    assert json.loads((state / "rejected/bad-json.json").read_text()) == {"error": "proposal_cannot_be_safely_redacted"}
+    assert json.loads((state / "runs/bad-json.json").read_text())["error"] == "invalid_json"
+
+
+def test_rejected_json_with_surrogate_still_records_schema_failure(tmp_path):
+    """Preserve diagnostics when invalid proposals contain a lone Unicode surrogate."""
+    roots = _roots(tmp_path)
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.run("Use a temporary fixture", "bad-surrogate", roots=roots,
+                  spawn_fn=fake_child(["\ud800"]))
+    state = layer.state_dir("project", roots["project"])
+    assert json.loads((state / "rejected/bad-surrogate.json").read_text()) == {"intents": ["\ud800"]}
+    assert json.loads((state / "runs/bad-surrogate.json").read_text())["error"] == "invalid_proposal_schema"
+
+
+def test_schema_rejection_with_missing_fields_has_detail(tmp_path):
+    """Record the intent index and rejected payload for missing required fields."""
+    roots = _roots(tmp_path)
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.run("Use a temporary fixture", "bad-fields", roots=roots,
+                  spawn_fn=fake_child([{"action": "delete"}]))
+    state = layer.state_dir("project", roots["project"])
+    account = json.loads((state / "runs/bad-fields.json").read_text())
+    assert account["detail"] == [["intents[0]", "intent must be an object containing exactly the required fields"]]
+    assert json.loads((state / "rejected/bad-fields.json").read_text()) == {"intents": [{"action": "delete"}]}
+
+
+def test_schema_rejection_redacts_numeric_personal_data(tmp_path):
+    """Redact numeric card fixtures in rejected output without changing harmless types."""
+    roots = _roots(tmp_path)
+    card = int("4" + "1" * 15)
+    invalid_body = {"integer": card, "nested": [float(card), 42, 3.25, True, False, None]}
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.run("Use a temporary fixture", "bad-numeric", roots=roots,
+                  spawn_fn=fake_child([proposal(body=invalid_body)]))
+    state = layer.state_dir("project", roots["project"])
+    saved = json.loads((state / "rejected/bad-numeric.json").read_text())["intents"][0]["body"]
+    assert saved["integer"] == "[REDACTED:pii:credit_card]"
+    assert saved["nested"][0].startswith("[REDACTED:pii:credit_card]")
+    assert str(card) not in json.dumps(saved)
+    assert saved["nested"][1:3] == [42, 3.25]
+    assert saved["nested"][3] is True
+    assert saved["nested"][4] is False
+    assert saved["nested"][5] is None
+    assert intent_queue.read("bad-numeric", roots["project"]) == []
+
+
+def test_schema_rejection_redacts_credentials_in_labeled_fields(tmp_path):
+    """Retain assignment-based redaction when credentials appear in JSON fields."""
+    roots = _roots(tmp_path)
+    password = "fixture" * 3
+    invalid_body = {"password": password, "nested": {"api_key": 987654321}, "harmless": "unchanged"}
+    with pytest.raises(spawn.RunnerError, match="invalid_proposal_schema"):
+        spawn.run("Use a temporary fixture", "bad-labeled", roots=roots,
+                  spawn_fn=fake_child([proposal(body=invalid_body)]))
+    state = layer.state_dir("project", roots["project"])
+    saved = json.loads((state / "rejected/bad-labeled.json").read_text())["intents"][0]["body"]
+    assert saved["password"] == "[REDACTED:secret:api_key_assignment]"
+    assert saved["nested"]["api_key"] == "[REDACTED:secret:api_key_assignment]"
+    assert saved["harmless"] == "unchanged"
+
+
 @pytest.mark.parametrize("retire_first", [False, True])
 def test_curator_merges_managed_and_preserves_native(tmp_path, retire_first):
     """Merge managed siblings safely in either proposal order without touching native skills."""
@@ -245,10 +408,10 @@ def test_curator_merges_managed_and_preserves_native(tmp_path, retire_first):
         skill_store.write_body("project", name, GOOD.format(n=name), roots["project"])
         if name != "native":
             sidecar.create("project", name, 0, roots["project"])
-    rows = [proposal(action="patch", name="umbrella", level=None, body=None,
+    rows = [proposal(action="patch", name="umbrella", level=None, body=None, files=[],
                      old_string="Run the operation", new_string="Run and check the operation",
                      evidence="Run the operation against a temporary fixture."),
-            proposal(action="delete", name="narrow", level=None, body=None, absorbed_into="umbrella",
+            proposal(action="delete", name="narrow", level=None, body=None, absorbed_into="umbrella", files=[],
                      evidence="Run the operation against a temporary fixture."),
             proposal(action="delete", name="native", level=None, body=None,
                      evidence="Run the operation against a temporary fixture.")]

@@ -160,6 +160,8 @@ Same-account OAuth refreshes are saved back to the original store, even when the
 | Archived skills | `<project>/.agents/skills/.archive/` | `~/.agents/skills/.archive/` |
 | Counters, queues, run history | `<project>/.agents/codex-autoharness/` | `~/.agents/codex-autoharness/` |
 
+Rejected structured proposals are saved with secret and personal-data redaction in `<project>/.agents/codex-autoharness/rejected/<run_id>.json`. The run record and `last_run.json` keep the error code, validation `detail`, and relative `rejected_proposal` path. Files that cannot be decoded safely retain only a diagnostic marker.
+
 Each managed skill carries ownership metadata and an append-only provenance ledger. The library index and lifecycle pass only manage those skills. Your other skills can supply context for duplicate detection but are not eligible for automatic modification. A create proposal cannot replace an existing directory.
 
 Git repositories automatically receive local `.git/info/exclude` rules for AutoHarness state and untracked managed skill directories, including archives. User-authored, imported, and already tracked skill directories remain visible. To share a learned skill, use `git add -f .agents/skills/<name>/`; the local rules leave the repository's `.gitignore` unchanged.
