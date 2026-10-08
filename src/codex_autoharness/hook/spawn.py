@@ -70,6 +70,10 @@ path. Delete is reversible retirement of managed skills only.
 class RunnerError(RuntimeError):
     """Sanitized failure suitable for CLI output and run accounts."""
 
+    def __init__(self, code, *, detail=None):
+        super().__init__(code)
+        self.detail = detail
+
 
 def _bounded(text, limit):
     """Clip UTF-8 text to the byte budget and mark omitted content."""
@@ -346,7 +350,7 @@ def _unique_object(pairs):
 
 
 def parse_proposals(text):
-    """Validate a complete response before normalizing its staging intents."""
+    """Normalize empty optional values and validate the entire response before staging."""
     if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise RunnerError("proposal_limit")
     try:
@@ -355,51 +359,90 @@ def parse_proposals(text):
     except (ValueError, TypeError, RecursionError) as exc:
         raise RunnerError("invalid_json") from exc
     if not isinstance(result, dict) or set(result) != {"intents"}:
-        raise RunnerError("invalid_proposal_schema")
+        raise RunnerError("invalid_proposal_schema", detail=[("schema", "response must contain only intents")])
     rows = result["intents"]
     if not isinstance(rows, list) or len(rows) > MAX_INTENTS:
-        raise RunnerError("invalid_proposal_schema")
+        raise RunnerError("invalid_proposal_schema", detail=[("intents", f"intents must be an array of at most {MAX_INTENTS} items")])
     intents = []
-    for row in rows:
+    for index, row in enumerate(rows):
+        field = f"intents[{index}]"
         if not isinstance(row, dict) or set(row) != _INTENT_KEYS:
-            raise RunnerError("invalid_proposal_schema")
+            raise RunnerError("invalid_proposal_schema", detail=[(field, "intent must be an object containing exactly the required fields")])
         if any(not isinstance(row[k], str) or not row[k].strip() for k in ("action", "name", "reason", "evidence")):
-            raise RunnerError("invalid_proposal_schema")
+            raise RunnerError("invalid_proposal_schema", detail=[(field, "action, name, reason and evidence must be non-empty strings")])
         if row["action"] not in _ACTIONS:
-            raise RunnerError("invalid_proposal_schema")
+            raise RunnerError("invalid_proposal_schema", detail=[(f"{field}.action", "unsupported action")])
         if any(row[k] is not None and not isinstance(row[k], str) for k in _INTENT_KEYS - {"files"}):
-            raise RunnerError("invalid_proposal_schema")
+            raise RunnerError("invalid_proposal_schema", detail=[(field, "fields other than files must be strings or null")])
         if row["level"] not in (None, *layer.LAYERS):
-            raise RunnerError("invalid_proposal_schema")
+            raise RunnerError("invalid_proposal_schema", detail=[(f"{field}.level", "level must be project, global or null")])
         intent = {key: value for key, value in row.items() if value is not None}
+        # Structured output often uses empty values for inapplicable fields.
+        for key, actions in (("body", ("create", "update")), ("old_string", ("patch",)),
+                             ("new_string", ("patch",)), ("path", ("remove_file",)),
+                             ("absorbed_into", ("delete",))):
+            if row["action"] not in actions and intent.get(key) == "":
+                intent.pop(key)
         if row["files"] is not None:
             files = row["files"]
             if not isinstance(files, list) or len(files) > config.STAGE_MAX_FILES:
-                raise RunnerError("invalid_proposal_schema")
+                raise RunnerError("invalid_proposal_schema", detail=[(f"{field}.files", f"files must be an array of at most {config.STAGE_MAX_FILES} items or null")])
             mapped = {}
             for item in files:
                 if not isinstance(item, dict) or set(item) != {"path", "content"} or any(not isinstance(v, str) for v in item.values()):
-                    raise RunnerError("invalid_proposal_schema")
+                    raise RunnerError("invalid_proposal_schema", detail=[(f"{field}.files", "each file must contain only string path and content fields")])
                 if item["path"] in mapped:
-                    raise RunnerError("invalid_proposal_schema")
+                    raise RunnerError("invalid_proposal_schema", detail=[(f"{field}.files", "file paths must be unique")])
                 mapped[item["path"]] = item["content"]
-            intent["files"] = mapped
-        if server._schema_errors(intent):
-            raise RunnerError("invalid_proposal_schema")
+            if mapped:
+                intent["files"] = mapped
+            else:
+                intent.pop("files")
+        errors = server._schema_errors(intent)
+        if errors:
+            raise RunnerError("invalid_proposal_schema", detail=[(f"{field}.{kind}", message) for kind, message in errors])
         if intent.get("body") and len(intent["body"].encode("utf-8")) > config.STAGE_MAX_BODY_BYTES:
             raise RunnerError("proposal_limit")
         intents.append(server._intent(intent))
     return intents
 
 
-def _record_outcome(run_id, roots, error=None):
+def _redacted_proposal(text):
+    """Redact decoded strings so JSON escapes cannot hide credentials."""
+    def safe(value):
+        if isinstance(value, str):
+            return redact.redact(value)
+        if isinstance(value, list):
+            return [safe(item) for item in value]
+        if isinstance(value, dict):
+            return {safe(key): safe(item) for key, item in value.items()}
+        return value
+
+    try:
+        value = json.loads(text, object_pairs_hook=_unique_object)
+        return json.dumps(safe(value), allow_nan=False)
+    except (ValueError, RecursionError):
+        # Do not persist undecoded output: escapes may conceal secrets.
+        return json.dumps({"error": "proposal_cannot_be_safely_redacted"})
+
+
+def _record_outcome(run_id, roots, error=None, *, detail=None, proposal=None):
     """Persist a sanitized success or failure account for a reflection."""
     proot = roots.get(layer.PROJECT)
     intent_queue._path(run_id, proot)
     record = {"run_id": run_id, "status": "error" if error else "ok", "verdicts": []}
     if error:
         record["error"] = error
+    if detail:
+        record["detail"] = [[redact.redact(kind), redact.redact(message)] for kind, message in detail]
     with lock_roots(roots):
+        if proposal is not None:
+            try:
+                path = layer.checked_path(proot or layer.default_root(layer.PROJECT), "codex-autoharness", "rejected", f"{run_id}.json")
+                atomic.write_text(path, _redacted_proposal(proposal))
+                record["rejected_proposal"] = f"rejected/{run_id}.json"
+            except (OSError, ValueError):
+                record["rejected_proposal_error"] = "rejected_proposal_io_error"
         atomic.write_text(layer.checked_path(proot or layer.default_root(layer.PROJECT), "codex-autoharness", "runs", f"{run_id}.json"), json.dumps(record))
         atomic.write_text(layer.checked_path(proot or layer.default_root(layer.PROJECT), "codex-autoharness", "last_run.json"), json.dumps({
             **record, "landed": 0, "rejected": 0, "absorbed": 0, "uncategorized": 0,
@@ -412,6 +455,7 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
     """Run an isolated authenticated proposer and admit validated intents once."""
     proot = roots.get(layer.PROJECT)
     intent_queue._path(run_id, proot)
+    proposal_text = None
     try:
         if carrier not in {"bundle", "resume", "fork"}:
             raise RunnerError("unsupported_carrier")
@@ -454,7 +498,8 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
                 raise RunnerError("child_exit_failure")
             if not output.is_file() or output.stat().st_size > MAX_OUTPUT_BYTES:
                 raise RunnerError("missing_or_oversize_proposal")
-            intents = parse_proposals(output.read_text(encoding="utf-8"))
+            proposal_text = output.read_text(encoding="utf-8")
+            intents = parse_proposals(proposal_text)
             if any(intent["evidence"].strip() not in evidence_text for intent in intents):
                 raise RunnerError("evidence_not_in_source")
             with lock_roots(roots):
@@ -472,7 +517,8 @@ def _execute(bundle, run_id, *, roots, repo_name=None, codex_bin=None, spawn_fn=
         _record_outcome(run_id, roots, "timeout")
         raise RunnerError("timeout") from exc
     except RunnerError as exc:
-        _record_outcome(run_id, roots, str(exc))
+        _record_outcome(run_id, roots, str(exc), detail=exc.detail,
+                        proposal=proposal_text if str(exc) in {"invalid_json", "invalid_proposal_schema"} else None)
         raise
     except auth.AuthError as exc:
         _record_outcome(run_id, roots, str(exc))

@@ -274,7 +274,7 @@ def test_session_recall_does_not_follow_a_managed_skill_file_symlink(roots, tmp_
     assert outside.read_bytes() == original
 
 
-@pytest.mark.parametrize("directory", ["runs", "snapshots"])
+@pytest.mark.parametrize("directory", ["runs", "snapshots", "rejected"])
 def test_runner_cannot_write_through_redirected_state_subdirectories(roots, tmp_path, directory):
     root = roots[layer.PROJECT]
     assert promoter.promote(proposal(), roots=roots)["ok"]
@@ -285,6 +285,9 @@ def test_runner_cannot_write_through_redirected_state_subdirectories(roots, tmp_
     source.mkdir()
 
     def fail_child(argv, env, bundle):
+        if directory == "rejected":
+            Path(argv[argv.index("--output-last-message") + 1]).write_text('{"intents": [{}]}')
+            return subprocess.CompletedProcess(argv, 0)
         return subprocess.CompletedProcess(argv, 1)
 
     with pytest.raises((spawn.RunnerError, ValueError)):
@@ -295,6 +298,10 @@ def test_runner_cannot_write_through_redirected_state_subdirectories(roots, tmp_
                       source_home=source, spawn_fn=fail_child)
 
     assert tree_bytes(outside) == {}
+    if directory == "rejected":
+        account = json.loads((layer.state_dir(layer.PROJECT, root) / "runs/redirected-state.json").read_text())
+        assert account["error"] == "invalid_proposal_schema"
+        assert account["rejected_proposal_error"] == "rejected_proposal_io_error"
 
 
 def test_compacted_rollout_is_reflected_and_replaces_the_stale_watermark(roots, tmp_path, monkeypatch):
